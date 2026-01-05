@@ -263,7 +263,6 @@ def inject_custom_css():
     st.markdown("""
     <style>
         .block-container { padding-top: 0px !important; padding-bottom: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; max-width: 100%; }
-        header[data-testid="stHeader"] { display: none; }
         .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
         .red-button > button:hover { background-color: #D93A3A !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
@@ -877,3 +876,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
