@@ -8,22 +8,35 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 
-# === 1. 구글 스프레드시트 DB 연결 설정 ===
-# Streamlit Secrets에서 인증 정보를 가져와 연결합니다.
+# === 1. 구글 스프레드시트 DB 연결 설정 (최종 수정 버전) ===
 def get_db_connection():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     
-    # st.secrets에 저장된 JSON 키 정보를 사용
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    # [🚀 여기가 핵심 수정] 깨진 줄바꿈 문자를 자동으로 고쳐주는 코드
-    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    
-    # 구글 시트 파일 이름 (아까 만드신 스프레드시트 제목과 똑같아야 합니다)
-    # 만약 제목을 다르게 지으셨다면 아래 "bus_schedule_db"를 수정하세요.
-    sh = client.open("bus_schedule_db")
-    return sh
+    try:
+        # 1. Secrets에서 JSON 키 로드 (두 가지 방식 모두 지원)
+        if "gcp_json" in st.secrets:
+            # 방법 A: gcp_json = """{...}""" 형태로 저장된 경우 (추천)
+            creds_dict = json.loads(st.secrets["gcp_json"])
+        else:
+            # 방법 B: [gcp_service_account] 아래에 키-값으로 저장된 경우 (기존 방식)
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            # 줄바꿈 문자 자동 보정
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
+        # 2. 인증 및 연결
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
+        # 3. 구글 시트 열기 (제목이 정확해야 함)
+        sh = client.open("bus_schedule_db")
+        return sh
+        
+    except Exception as e:
+        st.error(f"❌ 구글 시트 연결 실패: {e}")
+        # 상세 에러 내용을 보여주어 디버깅을 돕습니다.
+        st.write("힌트: Streamlit Secrets 설정을 확인하거나, 구글 시트 공유(이메일 초대)가 되었는지 확인하세요.")
+        st.stop()
 
 # === 데이터 캐싱 (속도 최적화 핵심) ===
 # 구글 시트에서 데이터를 가져오는 건 인터넷을 타므로, 한 번 가져오면 10분(600초)간 기억합니다.
@@ -35,7 +48,6 @@ def load_data(sheet_name):
         data = worksheet.get_all_records()
         return pd.DataFrame(data)
     except gspread.exceptions.WorksheetNotFound:
-        # 시트가 없으면 빈 데이터프레임 반환 (에러 방지)
         return pd.DataFrame()
 
 # 데이터 저장 (캐시 비우기 포함)
@@ -43,7 +55,7 @@ def save_data(sheet_name, new_row_data):
     sh = get_db_connection()
     worksheet = sh.worksheet(sheet_name)
     worksheet.append_row(new_row_data)
-    st.cache_data.clear()  # 저장했으니 옛날 기억 지우고 새로고침
+    st.cache_data.clear()
 
 # === 인증 및 유틸리티 함수 ===
 def make_hash(password):
@@ -54,6 +66,9 @@ def login_user(username, password):
     if df.empty: return None
     
     pw_hash = make_hash(password)
+    # 데이터 타입 통일 (문자열 변환)
+    df['username'] = df['username'].astype(str)
+    
     user = df[(df['username'] == username) & (df['password'] == pw_hash)]
     
     if not user.empty:
@@ -62,7 +77,7 @@ def login_user(username, password):
 
 def add_user_account(username, password, role, name):
     df = load_data("users")
-    if not df.empty and username in df['username'].values:
+    if not df.empty and username in df['username'].astype(str).values:
         return False
     
     new_row = [username, make_hash(password), role, name, datetime.now().strftime("%Y-%m-%d")]
@@ -72,25 +87,28 @@ def add_user_account(username, password, role, name):
 def delete_user_account(username):
     sh = get_db_connection()
     ws = sh.worksheet("users")
-    cell = ws.find(username)
-    if cell:
-        ws.delete_rows(cell.row)
-        st.cache_data.clear()
+    try:
+        cell = ws.find(username)
+        if cell:
+            ws.delete_rows(cell.row)
+            st.cache_data.clear()
+    except: pass
 
 def update_user_password(username, new_password):
     sh = get_db_connection()
     ws = sh.worksheet("users")
-    cell = ws.find(username)
-    if cell:
-        # 비밀번호 컬럼(B열, 2번째) 업데이트
-        ws.update_cell(cell.row, 2, make_hash(new_password))
-        st.cache_data.clear()
-        return True
+    try:
+        cell = ws.find(username)
+        if cell:
+            # 비밀번호 컬럼(B열, 2번째) 업데이트
+            ws.update_cell(cell.row, 2, make_hash(new_password))
+            st.cache_data.clear()
+            return True
+    except: pass
     return False
 
 # === 승무원 관리 함수 ===
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
-    # 1. drivers 시트에 승무원 추가 (중복이면 패스)
     sh = get_db_connection()
     ws_drivers = sh.worksheet("drivers")
     
@@ -98,17 +116,11 @@ def add_driver_with_group(name, group_name, start_date="2020-01-01"):
         existing = ws_drivers.find(name)
         if not existing:
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            # drivers 시트 구조: id, name, group_name, created_at, resigned_date
-            # id는 자동증가가 안되므로 현재 행 수 + 1 등으로 처리하거나 생략 가능
-            # 여기서는 편의상 id 생략하고 뒤에 붙임
             ws_drivers.append_row(["", name, group_name, created_at, ""])
-    except:
-        pass # 에러 무시
+    except: pass
 
-    # 2. group_history 시트에 이력 추가
     ws_history = sh.worksheet("group_history")
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    # 구조: id, driver_name, group_name, start_date, created_at
     ws_history.append_row(["", name, group_name, start_date, created_at])
     
     st.cache_data.clear()
@@ -117,11 +129,13 @@ def add_driver_with_group(name, group_name, start_date="2020-01-01"):
 def set_driver_resignation(name, r_date):
     sh = get_db_connection()
     ws = sh.worksheet("drivers")
-    cell = ws.find(name)
-    if cell:
-        # resigned_date 컬럼 위치를 찾아 업데이트 (E열 가정, 5번째)
-        ws.update_cell(cell.row, 5, r_date)
-        st.cache_data.clear()
+    try:
+        cell = ws.find(name)
+        if cell:
+            # resigned_date 컬럼 위치 (E열, 5번째)
+            ws.update_cell(cell.row, 5, r_date)
+            st.cache_data.clear()
+    except: pass
 
 def delete_driver(driver_name):
     sh = get_db_connection()
@@ -132,11 +146,11 @@ def delete_driver(driver_name):
         if cell: ws_d.delete_rows(cell.row)
     except: pass
     
-    # group_history 삭제 (여러 개일 수 있음 - 역순 삭제 필요)
+    # group_history 삭제 (역순)
     ws_h = sh.worksheet("group_history")
     try:
         cells = ws_h.findall(driver_name)
-        for cell in reversed(cells): # 뒤에서부터 지워야 인덱스 안 꼬임
+        for cell in reversed(cells): 
             ws_h.delete_rows(cell.row)
     except: pass
     
@@ -171,7 +185,6 @@ def get_group_by_date_memory(history_df, name, target_date_str):
     
     valid_rows = subset[subset['start_date'] <= target_date_str]
     if not valid_rows.empty:
-        # start_date 기준 내림차순 정렬 후 첫 번째
         valid_rows = valid_rows.sort_values(by='start_date', ascending=False)
         return valid_rows.iloc[0]['group_name']
     return None
@@ -181,20 +194,20 @@ def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # 추가할 데이터 리스트 생성
     rows_to_add = []
-    
-    # 중복 체크를 위해 현재 스케줄 로드
     df_schedules = load_data("schedules")
     
+    # 데이터프레임 타입 보정 (문자열 비교 위해)
+    if not df_schedules.empty:
+        df_schedules['name'] = df_schedules['name'].astype(str)
+        df_schedules['date'] = df_schedules['date'].astype(str)
+
     for name in name_list:
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
             
-            # 중복 체크 (메모리상에서)
             is_duplicate = False
             if not df_schedules.empty:
-                # 이름과 날짜가 모두 같은 행이 있는지 확인
                 dup = df_schedules[
                     (df_schedules['name'] == name) & 
                     (df_schedules['date'] == d_str)
@@ -203,29 +216,19 @@ def save_range_batch(name_list, start, end, type, shift, note):
                     is_duplicate = True
             
             if not is_duplicate:
-                # id, name, date, type, shift, note, created_at
                 rows_to_add.append(["", name, d_str, type, shift, note, created_at])
     
     if rows_to_add:
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
-        ws.append_rows(rows_to_add) # 한 번에 저장
+        ws.append_rows(rows_to_add)
         st.cache_data.clear()
         
     return len(rows_to_add)
 
-# 행사 저장
 def add_company_event(date, title):
     created_at = datetime.now().strftime("%Y-%m-%d")
     save_data("company_events", ["", date, title, created_at])
-
-def delete_company_event(event_dates_titles):
-    # 구글 시트에서 삭제는 행 번호가 필요하므로 조금 복잡하지만
-    # 여기서는 간단히 구현 (실제로는 id나 unique key 권장)
-    sh = get_db_connection()
-    ws = sh.worksheet("company_events")
-    # 편의상 전체 다시 로드해서 매칭되는 행 삭제 (역순)
-    pass # 구현 복잡도상 생략, 필요시 추가
 
 def get_korean_weekday(date_str):
     return ["월", "화", "수", "목", "금", "토", "일"][datetime.strptime(date_str, "%Y-%m-%d").weekday()]
@@ -372,11 +375,13 @@ def show_input_dialog():
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 all_drivers = load_data("drivers")
-                # 이름 검증 로직 추가 필요
-                with st.spinner('저장 중입니다...'):
-                    s_ids, start, end = [], rng[0], rng[1] if len(rng)>1 else rng[0]
-                    save_range_batch(lst, start, end, typ, sft, nte)
-                st.success("저장되었습니다!"); st.rerun()
+                db_names = all_drivers['name'].astype(str).tolist() if not all_drivers.empty else []
+                invalid_names = [n for n in lst if n not in db_names]
+                if invalid_names: st.error(f"❌ 등록되지 않은 승무원: {', '.join(invalid_names)}")
+                else:
+                    with st.spinner('저장 중입니다...'):
+                        save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                    st.success("저장되었습니다!"); st.rerun()
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
         ed_list = st.date_input("행사 기간", [], help="시작/종료일", key="quick_event_range")
@@ -419,10 +424,8 @@ def render_calendar_tab():
     selected_year = st.session_state.view_year
     selected_month = st.session_state.view_month
     
-    # [Google Sheets] 전체 데이터 로드 후 필터링 (속도 위해 한 번에)
     df = load_data("schedules")
     if not df.empty:
-        # 날짜 문자열 필터링 (YYYY-MM 형식)
         filter_keyword = f"{selected_year}-{selected_month:02d}"
         df_month = df[df['date'].astype(str).str.startswith(filter_keyword)]
     else:
@@ -441,7 +444,6 @@ def render_calendar_tab():
     if not df_month.empty:
         for _, row in df_month.iterrows(): full_schedule_map[(row['name'], row['date'])] = row['type']
     
-    # ... (get_streak_info, sort_order, weekday_korean 등 기존 로직 동일) ...
     def get_streak_info(p_name, p_date_str, p_type):
         if (p_name, p_date_str) not in full_schedule_map: return ""
         curr = datetime.strptime(p_date_str, "%Y-%m-%d")
@@ -648,7 +650,7 @@ def render_driver_manage_tab():
                 if change_names_str:
                     names_to_change = [n.strip() for n in change_names_str.replace(',', '\n').split('\n') if n.strip()]
                     all_drivers = load_data("drivers")
-                    all_db_names = all_drivers['name'].tolist() if not all_drivers.empty else []
+                    all_db_names = all_drivers['name'].astype(str).tolist() if not all_drivers.empty else []
                     
                     valid_names = []
                     invalid_names = []
@@ -807,61 +809,6 @@ def render_individual_calendar_tab():
                             <div style='text-align:center; font-weight:bold; font-size:13px; color:{text_color}; margin-top:5px;'>{sub_text}</div>
                         </div>""", unsafe_allow_html=True)
 
-def render_input_tab():
-    st.subheader("📝 관리자 입력")
-    t1, t2 = st.tabs(["휴무 등록", "행사 등록"])
-    with t1:
-        c1, c2 = st.columns([2, 1])
-        with c1: names_str = st.text_area("이름 (엔터 구분)", height=68)
-        with c2: rng = st.date_input("기간", [], help="시작/종료일 선택")
-        if names_str and len(rng) > 0:
-            chk = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
-            warn = []
-            for n in chk:
-                g = get_driver_group_by_name(n)
-                if g and g in get_off_groups(rng[0].strftime("%Y-%m-%d"))[1]: warn.append(f"⚠️ {n}({g}) 정기휴무")
-            if warn: st.info("\n".join(warn))
-        c3, c4 = st.columns(2)
-        with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"])
-        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"])
-        nte = st.text_input("비고")
-        st.markdown('<div class="red-button">', unsafe_allow_html=True)
-        if st.button("일괄 저장", type="primary", use_container_width=True):
-            if names_str and len(rng) > 0:
-                lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
-                all_drivers = load_data("drivers")
-                db_names = all_drivers['name'].tolist() if not all_drivers.empty else []
-                invalid_names = [n for n in lst if n not in db_names]
-                if invalid_names: st.error(f"❌ 등록되지 않은 승무원이 포함되어 있습니다: {', '.join(invalid_names)}")
-                else:
-                    with st.spinner('저장 중입니다...'):
-                        s_ids, start, end = [], rng[0], rng[1] if len(rng)>1 else rng[0]
-                        save_range_batch(lst, start, end, typ, sft, nte)
-                    st.success("저장 완료"); st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-    with t2:
-        c_e1, c_e2 = st.columns([2, 1])
-        with c_e1:
-            ed_list = st.date_input("행사 기간", [], help="시작/종료일")
-            et = st.text_input("내용")
-            if st.button("행사 저장", type="secondary"):
-                if et and len(ed_list) > 0:
-                    with st.spinner('저장 중입니다...'):
-                        s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
-                        for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
-                        st.cache_data.clear() 
-                    st.success("저장됨"); st.rerun()
-        st.divider()
-        st.write("🗑️ **등록된 행사 목록 (삭제 가능)**")
-        events_df = load_data("company_events")
-        if not events_df.empty:
-            events_df['삭제'] = False
-            edited_events = st.data_editor(events_df[['date', 'title', '삭제']], column_config={"date": "날짜", "title": "행사명", "삭제": st.column_config.CheckboxColumn("선택")}, hide_index=True, use_container_width=True)
-            if st.button("선택한 행사 삭제", type="primary"):
-                # 실제 삭제 로직 (생략 - 필요시 추가 구현)
-                st.info("구글 시트 연동 버전에서는 시트에서 직접 행을 삭제해주세요.")
-        else: st.info("등록된 행사가 없습니다.")
-
 def render_view_manage_tab():
     st.subheader("📊 조회 및 관리")
     df = load_data("schedules")
@@ -929,5 +876,4 @@ def main():
         with t3: render_public_search_tab()
 
 if __name__ == '__main__':
-
     main()
