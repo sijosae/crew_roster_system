@@ -8,38 +8,31 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 
-# === 1. 구글 스프레드시트 DB 연결 설정 (최종 수정 버전) ===
+# === 1. 구글 스프레드시트 DB 연결 설정 ===
 def get_db_connection():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     
     try:
-        # 1. Secrets에서 JSON 키 로드 (두 가지 방식 모두 지원)
+        # Secrets에서 JSON 키 로드 (통째로 문자열 방식 우선)
         if "gcp_json" in st.secrets:
-            # 방법 A: gcp_json = """{...}""" 형태로 저장된 경우 (추천)
             creds_dict = json.loads(st.secrets["gcp_json"])
         else:
-            # 방법 B: [gcp_service_account] 아래에 키-값으로 저장된 경우 (기존 방식)
+            # 기존 방식 (백업)
             creds_dict = dict(st.secrets["gcp_service_account"])
-            # 줄바꿈 문자 자동 보정
             if "private_key" in creds_dict:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             
-        # 2. 인증 및 연결
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        
-        # 3. 구글 시트 열기 (제목이 정확해야 함)
         sh = client.open("bus_schedule_db")
         return sh
         
     except Exception as e:
         st.error(f"❌ 구글 시트 연결 실패: {e}")
-        # 상세 에러 내용을 보여주어 디버깅을 돕습니다.
         st.write("힌트: Streamlit Secrets 설정을 확인하거나, 구글 시트 공유(이메일 초대)가 되었는지 확인하세요.")
         st.stop()
 
-# === 데이터 캐싱 (속도 최적화 핵심) ===
-# 구글 시트에서 데이터를 가져오는 건 인터넷을 타므로, 한 번 가져오면 10분(600초)간 기억합니다.
+# === 데이터 캐싱 ===
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
     sh = get_db_connection()
@@ -50,7 +43,6 @@ def load_data(sheet_name):
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame()
 
-# 데이터 저장 (캐시 비우기 포함)
 def save_data(sheet_name, new_row_data):
     sh = get_db_connection()
     worksheet = sh.worksheet(sheet_name)
@@ -62,11 +54,15 @@ def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
 
 def login_user(username, password):
+    # 🚨 [만능열쇠 적용] 구글 시트 상태와 무관하게 이 계정은 무조건 통과
+    if username == "admin" and password == "0711":
+        return "admin", "슈퍼관리자"
+
+    # 일반 로그인 로직
     df = load_data("users")
     if df.empty: return None
     
     pw_hash = make_hash(password)
-    # 데이터 타입 통일 (문자열 변환)
     df['username'] = df['username'].astype(str)
     
     user = df[(df['username'] == username) & (df['password'] == pw_hash)]
@@ -100,7 +96,6 @@ def update_user_password(username, new_password):
     try:
         cell = ws.find(username)
         if cell:
-            # 비밀번호 컬럼(B열, 2번째) 업데이트
             ws.update_cell(cell.row, 2, make_hash(new_password))
             st.cache_data.clear()
             return True
@@ -111,7 +106,6 @@ def update_user_password(username, new_password):
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
     ws_drivers = sh.worksheet("drivers")
-    
     try:
         existing = ws_drivers.find(name)
         if not existing:
@@ -122,7 +116,6 @@ def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     ws_history = sh.worksheet("group_history")
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ws_history.append_row(["", name, group_name, start_date, created_at])
-    
     st.cache_data.clear()
     return True
 
@@ -132,21 +125,18 @@ def set_driver_resignation(name, r_date):
     try:
         cell = ws.find(name)
         if cell:
-            # resigned_date 컬럼 위치 (E열, 5번째)
             ws.update_cell(cell.row, 5, r_date)
             st.cache_data.clear()
     except: pass
 
 def delete_driver(driver_name):
     sh = get_db_connection()
-    # drivers 삭제
     ws_d = sh.worksheet("drivers")
     try:
         cell = ws_d.find(driver_name)
         if cell: ws_d.delete_rows(cell.row)
     except: pass
     
-    # group_history 삭제 (역순)
     ws_h = sh.worksheet("group_history")
     try:
         cells = ws_h.findall(driver_name)
@@ -154,14 +144,12 @@ def delete_driver(driver_name):
             ws_h.delete_rows(cell.row)
     except: pass
     
-    # schedules 삭제
     ws_s = sh.worksheet("schedules")
     try:
         cells = ws_s.findall(driver_name)
         for cell in reversed(cells):
             ws_s.delete_rows(cell.row)
     except: pass
-    
     st.cache_data.clear()
 
 # === 스케줄 및 계산 함수 ===
@@ -177,7 +165,6 @@ def calculate_auto_shift(group_name, target_date_str):
         return pat[((tgt - ref).days + off) % 10]
     except: return None
 
-# 메모리에서 그룹 찾기 (속도 최적화)
 def get_group_by_date_memory(history_df, name, target_date_str):
     if history_df.empty: return None
     subset = history_df[history_df['driver_name'] == name]
@@ -189,15 +176,12 @@ def get_group_by_date_memory(history_df, name, target_date_str):
         return valid_rows.iloc[0]['group_name']
     return None
 
-# 일괄 저장 (Batch) - 구글 시트용 최적화
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
     rows_to_add = []
     df_schedules = load_data("schedules")
     
-    # 데이터프레임 타입 보정 (문자열 비교 위해)
     if not df_schedules.empty:
         df_schedules['name'] = df_schedules['name'].astype(str)
         df_schedules['date'] = df_schedules['date'].astype(str)
@@ -205,16 +189,10 @@ def save_range_batch(name_list, start, end, type, shift, note):
     for name in name_list:
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
-            
             is_duplicate = False
             if not df_schedules.empty:
-                dup = df_schedules[
-                    (df_schedules['name'] == name) & 
-                    (df_schedules['date'] == d_str)
-                ]
-                if not dup.empty:
-                    is_duplicate = True
-            
+                dup = df_schedules[(df_schedules['name'] == name) & (df_schedules['date'] == d_str)]
+                if not dup.empty: is_duplicate = True
             if not is_duplicate:
                 rows_to_add.append(["", name, d_str, type, shift, note, created_at])
     
@@ -223,7 +201,6 @@ def save_range_batch(name_list, start, end, type, shift, note):
         ws = sh.worksheet("schedules")
         ws.append_rows(rows_to_add)
         st.cache_data.clear()
-        
     return len(rows_to_add)
 
 def add_company_event(date, title):
@@ -263,6 +240,7 @@ def inject_custom_css():
     st.markdown("""
     <style>
         .block-container { padding-top: 0px !important; padding-bottom: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; max-width: 100%; }
+        /* 메뉴 버튼 보이게 수정됨 */
         .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
         .red-button > button:hover { background-color: #D93A3A !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
@@ -469,6 +447,10 @@ def render_calendar_tab():
     weekday_korean = ["월", "화", "수", "목", "금", "토", "일"]
     _, last_day = calendar.monthrange(selected_year, selected_month)
 
+    def get_detailed_daily_stats(date_str, all_drivers, today_schedules, group_history_df):
+        # 통계 계산 로직 (간략화)
+        return f"{date_str} 현황"
+
     def get_day_html(day, is_horiz=True):
         cur_date = datetime(selected_year, selected_month, day)
         date_str = cur_date.strftime("%Y-%m-%d")
@@ -525,7 +507,6 @@ def render_calendar_tab():
             for _, row in today_schedules.iterrows():
                 color = get_type_color(row['type'])
                 prefix, suffix, period_text = get_streak_info(row['name'], date_str, row['type'])
-                # 메모리 조회 사용
                 eff_grp = get_group_by_date_memory(group_history_df, row['name'], date_str)
                 orig_shift = calculate_auto_shift(eff_grp, date_str)
                 p_tip = f"원래 근무: {orig_shift if orig_shift else '없음'} ({eff_grp})"
@@ -650,13 +631,11 @@ def render_driver_manage_tab():
                     names_to_change = [n.strip() for n in change_names_str.replace(',', '\n').split('\n') if n.strip()]
                     all_drivers = load_data("drivers")
                     all_db_names = all_drivers['name'].astype(str).tolist() if not all_drivers.empty else []
-                    
                     valid_names = []
                     invalid_names = []
                     for name in names_to_change:
                         if name in all_db_names: valid_names.append(name)
                         else: invalid_names.append(name)
-                    
                     if invalid_names: st.error(f"❌ 다음 이름은 명단에 없어 제외됩니다: {', '.join(invalid_names)}")
                     if valid_names:
                         success_cnt = 0
@@ -876,4 +855,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
