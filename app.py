@@ -15,6 +15,8 @@ def get_db_connection():
     
     # st.secrets에 저장된 JSON 키 정보를 사용
     creds_dict = dict(st.secrets["gcp_service_account"])
+    # [🚀 여기가 핵심 수정] 깨진 줄바꿈 문자를 자동으로 고쳐주는 코드
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     
@@ -927,4 +929,5 @@ def main():
         with t3: render_public_search_tab()
 
 if __name__ == '__main__':
+
     main()
