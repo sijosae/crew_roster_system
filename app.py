@@ -12,7 +12,6 @@ import json
 def get_db_connection():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        # Secrets에서 JSON 키 로드
         if "gcp_json" in st.secrets:
             creds_dict = json.loads(st.secrets["gcp_json"])
         else:
@@ -140,7 +139,6 @@ def delete_driver(driver_name):
     except: pass
     st.cache_data.clear()
 
-# === [추가된 핵심 함수] 이름으로 현재 조 찾기 ===
 def get_driver_group_by_name(name):
     df = load_data("drivers")
     if df.empty: return None
@@ -173,30 +171,36 @@ def get_group_by_date_memory(history_df, name, target_date_str):
         return valid_rows.iloc[0]['group_name']
     return None
 
+# [핵심 수정] 저장 컬럼 순서 A~G 맞춰서 수정 & 속도 최적화
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     rows_to_add = []
+    
+    # 중복 체크 최적화: 시트를 한 번만 읽어서 메모리에서 비교
     df_schedules = load_data("schedules")
+    existing_set = set()
     if not df_schedules.empty:
+        # 검색 속도를 위해 (이름, 날짜)를 Set으로 만듦
         df_schedules['name'] = df_schedules['name'].astype(str)
         df_schedules['date'] = df_schedules['date'].astype(str)
+        existing_set = set(zip(df_schedules['name'], df_schedules['date']))
 
     for name in name_list:
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
-            is_duplicate = False
-            if not df_schedules.empty:
-                dup = df_schedules[(df_schedules['name'] == name) & (df_schedules['date'] == d_str)]
-                if not dup.empty: is_duplicate = True
-            if not is_duplicate:
-                rows_to_add.append(["", name, d_str, type, shift, note, created_at])
+            # 중복 아니면 추가
+            if (name, d_str) not in existing_set:
+                # [순서 수정] A:id, B:name, C:date, D:type, E:note, F:created_at, G:shift
+                rows_to_add.append(["", name, d_str, type, note, created_at, shift])
     
     if rows_to_add:
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
+        # 한 번에 통신 (API 호출 1회)
         ws.append_rows(rows_to_add)
         st.cache_data.clear()
+        
     return len(rows_to_add)
 
 def add_company_event(date, title):
@@ -235,7 +239,9 @@ def is_holiday(date_obj):
 def inject_custom_css():
     st.markdown("""
     <style>
-        .block-container { padding-top: 0px !important; padding-bottom: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; max-width: 100%; }
+        /* [수정 1] 상단 바 패딩을 늘려서 제목이 가려지지 않게 함 */
+        .block-container { padding-top: 4rem !important; padding-bottom: 1rem !important; }
+        
         .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
         .red-button > button:hover { background-color: #D93A3A !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
@@ -328,13 +334,10 @@ def calculate_layout_rows(df_month):
 def get_detailed_daily_stats(date_str, all_drivers, today_schedules, group_history_df):
     total = len(all_drivers)
     am_cnt, pm_cnt, off_cnt = 0, 0, 0
-    
-    # 1. 자동 근무 계산
     for _, drv in all_drivers.iterrows():
         name = drv['name']
         grp = get_group_by_date_memory(group_history_df, name, date_str)
         s = calculate_auto_shift(grp, date_str)
-        # 2. 예외 스케줄 반영
         if not today_schedules.empty:
             sched = today_schedules[today_schedules['name'] == name]
             if not sched.empty:
@@ -342,11 +345,9 @@ def get_detailed_daily_stats(date_str, all_drivers, today_schedules, group_histo
                 manual_s = sched.iloc[0]['shift']
                 if t == '휴무': s = '휴무'
                 elif manual_s and manual_s != '자동': s = manual_s
-        
         if s == '오전': am_cnt += 1
         elif s == '오후': pm_cnt += 1
         elif s == '휴무': off_cnt += 1
-        
     return f"총 {total}명 / 오전 {am_cnt} / 오후 {pm_cnt} / 휴무 {off_cnt}"
 
 @st.dialog("➕ 빠른 등록")
