@@ -10,7 +10,21 @@ import time
 import traceback
 
 # ==========================================
-# 1. DB 연결 (영구 캐싱 & 속도 최적화)
+# 0. 로그 및 초기화
+# ==========================================
+def get_kst_now():
+    return datetime.utcnow() + timedelta(hours=9)
+
+if 'system_logs' not in st.session_state:
+    st.session_state['system_logs'] = []
+
+def add_log(msg, level="INFO"):
+    timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+    icon = "✅" if level == "INFO" else "🚨"
+    st.session_state['system_logs'].insert(0, f"[{timestamp}] {icon} {msg}")
+
+# ==========================================
+# 1. DB 연결
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -36,17 +50,6 @@ def get_db_connection():
     if sh: return sh
     st.stop()
 
-def get_kst_now():
-    return datetime.utcnow() + timedelta(hours=9)
-
-if 'system_logs' not in st.session_state:
-    st.session_state['system_logs'] = []
-
-def add_log(msg, level="INFO"):
-    timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    icon = "✅" if level == "INFO" else "🚨"
-    st.session_state['system_logs'].insert(0, f"[{timestamp}] {icon} {msg}")
-
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
     sh = get_db_connection()
@@ -63,7 +66,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 2. 인증 및 계정
+# 2. 인증
 # ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
@@ -110,7 +113,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 3. 데이터 저장 (초고속 모드)
+# 3. 데이터 저장 (ID 생성 로직 통일)
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -155,7 +158,6 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
-# [저장 최적화] 읽기 없이 쓰기만 수행 (속도 0.5초)
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
@@ -179,15 +181,20 @@ def save_range_batch(name_list, start, end, type, shift, note):
         
     return len(rows_to_add)
 
+# [수정] 회사 행사에도 ID 부여 (버그 해결)
 def add_company_event(date, title):
     sh = get_db_connection()
     ws = sh.worksheet("company_events")
-    created_at = get_kst_now().strftime("%Y-%m-%d")
-    ws.append_row(["", date, title, created_at])
+    now_kst = get_kst_now()
+    created_at = now_kst.strftime("%Y-%m-%d")
+    # ID 생성: 시간 + 랜덤한 느낌의 초단위 숫자
+    row_id = now_kst.strftime("%y%m%d%H%M%S") 
+    
+    ws.append_row([row_id, date, title, created_at])
     clear_cache_after_save()
 
 # ==========================================
-# 4. 로직 및 계산 (전역 변수 & 딕셔너리 최적화)
+# 4. 로직 및 계산
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -204,7 +211,6 @@ def calculate_auto_shift(group_name, target_date_str):
         return pat[((tgt - ref).days + off) % 10]
     except: return None
 
-# [최적화] Dictionary 사용
 def get_group_from_dict(history_dict, name, target_date_str):
     if name not in history_dict: return None
     records = history_dict[name]
@@ -310,7 +316,6 @@ def get_stats_optimized(date_str, all_drivers_df, today_schedules_df, history_di
     total = len(all_drivers_df)
     am_cnt, pm_cnt, off_cnt = 0, 0, 0
     
-    # [안전장치] 컬럼이 없으면 자동 생성 (에러 방지)
     if not today_schedules_df.empty and 'shift' not in today_schedules_df.columns:
         today_schedules_df['shift'] = '자동'
 
@@ -345,20 +350,16 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     if (p_name, p_date_str) not in full_schedule_map: return "", "", ""
     curr = datetime.strptime(p_date_str, "%Y-%m-%d")
     start_date, end_date = curr, curr
-    
-    # 월간 경계 없이 전체 검색
     while True:
         prev_d = (start_date - timedelta(days=1)).strftime("%Y-%m-%d")
         if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: 
             start_date -= timedelta(days=1)
         else: break
-    
     while True:
         next_d = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
         if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: 
             end_date += timedelta(days=1)
         else: break
-        
     duration = (end_date - start_date).days + 1
     prefix, suffix = "", ""
     period_text = f"(~{end_date.month}/{end_date.day})"
@@ -370,7 +371,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 5. 화면 렌더링 (안전장치 추가)
+# 5. 화면 렌더링 (팝업 및 에러 고정)
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -431,8 +432,11 @@ def show_input_dialog():
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     add_log(error_msg, "ERROR")
-                    st.error("🚨 저장 중 오류 발생! (🔧 시스템 로그 탭을 확인하세요)")
-            else: st.warning("이름과 기간을 입력해주세요.")
+                    st.error("🚨 저장 중 오류 발생! (화면 고정됨)")
+                    st.text_area("에러 상세", error_msg, height=200)
+                    st.stop() # [중요] 여기서 멈춰서 팝업창 유지
+            else:
+                st.warning("이름과 기간을 입력해주세요.")
 
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
@@ -447,8 +451,11 @@ def show_input_dialog():
                         st.cache_data.clear()
                     st.success("행사가 저장되었습니다!"); st.rerun()
                 except Exception as e:
+                    error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     add_log(f"행사 저장 실패: {str(e)}", "ERROR")
-                    st.error("오류 발생 (로그 확인)")
+                    st.error("오류 발생 (화면 고정됨)")
+                    st.text_area("에러 상세", error_msg, height=200)
+                    st.stop() # 멈춤
             else: st.warning("기간과 내용을 모두 입력해주세요.")
 
 def render_log_tab():
@@ -500,12 +507,15 @@ def _render_calendar_tab_unsafe():
     selected_month = st.session_state.view_month
     
     df = load_data("schedules")
+    
+    # [수정] 렌더링은 해당 월만 필터링 (화면 그리기 용)
     if not df.empty:
         filter_keyword = f"{selected_year}-{selected_month:02d}"
         df_month = df[df['date'].astype(str).str.startswith(filter_keyword)]
     else:
         df_month = pd.DataFrame(columns=['id', 'name', 'date', 'type', 'shift', 'note', 'created_at'])
 
+    # [수정] 휴무 연속성 계산은 전체 데이터(df)로 맵핑 (월 넘어가도 계산되게)
     full_schedule_map = {}
     if not df.empty:
         for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
@@ -687,7 +697,7 @@ def render_input_tab():
             st.caption(f"{len(names_str.split())}명 선택됨")
         c3, c4 = st.columns(2)
         with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
-        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
+        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"])
         nte = st.text_input("비고")
         st.markdown('<div class="red-button">', unsafe_allow_html=True)
         if st.button("일괄 저장", type="primary", use_container_width=True):
