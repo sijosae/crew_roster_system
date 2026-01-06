@@ -7,6 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import time
+import traceback
 
 # ==========================================
 # 1. DB 연결 (영구 캐싱 & 속도 최적화)
@@ -399,25 +400,45 @@ def show_input_dialog():
         with c1: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
+        
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
-                with st.spinner('저장 중입니다...'):
-                    save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                st.toast("저장 완료!", icon="✅")
-                time.sleep(1)
-                st.rerun()
+                
+                # [진단 모드] 에러 발생 시 멈춤 기능 추가
+                try:
+                    with st.spinner('저장 중입니다...'):
+                        save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                    
+                    # 성공했을 때만 새로고침
+                    st.toast("저장 완료!", icon="✅")
+                    time.sleep(1)
+                    st.rerun()
+                    
+                except Exception:
+                    # 실패하면 에러를 화면에 박제하고, 새로고침(rerun)을 하지 않음!
+                    st.error("🚨 저장 중 오류가 발생했습니다! (아래 내용을 캡처해주세요)")
+                    st.code(traceback.format_exc()) # 에러 상세 내용 출력
+            else:
+                st.warning("이름과 기간을 입력해주세요.")
+
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
         ed_list = st.date_input("행사 기간", [], help="시작/종료일", key="quick_event_range")
         et = st.text_input("행사 내용", key="quick_event_title")
         if st.button("회사 행사 저장", type="primary", use_container_width=True, key="quick_event_save"):
             if et and len(ed_list) > 0:
-                with st.spinner('저장 중입니다...'):
-                    s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
-                    for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
-                    st.cache_data.clear()
-                st.success("행사가 저장되었습니다!"); st.rerun()
+                try:
+                    with st.spinner('저장 중입니다...'):
+                        s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
+                        for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
+                        st.cache_data.clear()
+                    st.success("행사가 저장되었습니다!"); 
+                    time.sleep(1)
+                    st.rerun()
+                except Exception:
+                    st.error("🚨 행사 저장 오류")
+                    st.code(traceback.format_exc())
             else: st.warning("기간과 내용을 모두 입력해주세요.")
 
 def render_calendar_tab():
@@ -951,3 +972,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
