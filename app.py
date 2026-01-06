@@ -285,7 +285,6 @@ def get_daily_shift_summary(date_str):
     am, pm = [], []
     off_from_am, off_from_pm = [], []
     
-    # 어제 날짜 계산 (어제 근무 확인용)
     prev_date = (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     
     for i in range(1, 11):
@@ -297,15 +296,12 @@ def get_daily_shift_summary(date_str):
         elif s == "오후":
             pm.append(str(i))
         else:
-            # 휴무인 경우, 어제 근무를 확인해서 분류
             prev_s = calculate_auto_shift(grp_name, prev_date)
             if prev_s == "오전":
-                off_from_am.append(str(i)) # 어제 오전 -> 오늘 휴무 (상단 배치)
+                off_from_am.append(str(i)) 
             else:
-                off_from_pm.append(str(i)) # 어제 오후 -> 오늘 휴무 (하단 배치)
+                off_from_pm.append(str(i))
         
-    # HTML 구성 (Flexbox로 좌우 정렬)
-    # 1행: 오전 (좌) - 휴무(오전끝) (우)
     line1 = f"""
     <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:1px;'>
         <span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span>
@@ -313,14 +309,12 @@ def get_daily_shift_summary(date_str):
     </div>
     """
     
-    # 2행: 오후 (좌) - 휴무(오후끝) (우)
     line2 = f"""
     <div style='display:flex; justify-content:space-between; align-items:center;'>
         <span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span>
         <span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_pm)}</span>
     </div>
     """
-    
     return line1 + line2
 
 @st.cache_data(ttl=600)
