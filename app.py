@@ -449,14 +449,16 @@ def inject_custom_css():
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
         .event-container::-webkit-scrollbar { display: none; }
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
-        .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1); }
+        /* [수정] 기본 테두리 제거 (개별 적용) */
+        .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: none; border-bottom: none; }
         .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
         .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
         .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
-        .login-btn > button { background-color: #FF4B4B !important; color: white !important; width: 100%; font-weight: bold; border-radius: 5px; padding: 10px; }
-        .login-btn > button:hover { background-color: #D93A3A !important; }
+        /* [수정] 로그인 버튼 스타벅스 그린 적용 */
+        .login-btn > button { background-color: #00592D !important; color: white !important; width: 100%; font-weight: bold; border-radius: 5px; padding: 10px; border: none; }
+        .login-btn > button:hover { background-color: #004d26 !important; }
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
     </style>
     """, unsafe_allow_html=True)
@@ -720,8 +722,8 @@ def _render_calendar_tab_unsafe():
                     if period_text: n_txt += f" {period_text}"
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{n_txt}</div>"
                 
-                # [수정] 테두리 진하게 (#333) 변경
-                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col}; border: 1px solid #333;' title='{p_tip}'>{i_html}</div>"
+                # [수정] 테두리를 배경색과 동일하게 2px로 설정하여 블록처럼 보이게 함
+                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col}; border: 2px solid {color};' title='{p_tip}'>{i_html}</div>"
         html += '</div>'
         return html
 
@@ -767,11 +769,12 @@ def _render_calendar_tab_unsafe():
                         elif item['is_end']: bar_class = "bar-end"
                         else: bar_class = "bar-mid"
                     
-                    # [수정] 가로모드 테두리 진하게
-                    border_style = "border-top: 1px solid #333; border-bottom: 1px solid #333;"
-                    if bar_class == "bar-start": border_style += "border-left: 1px solid #333;"
-                    elif bar_class == "bar-end": border_style += "border-right: 1px solid #333;"
-                    elif bar_class == "bar-single": border_style = "border: 1px solid #333;"
+                    # [수정] 가로모드 테두리를 배경색과 동일하게 2px로 설정
+                    border_width = "2px"
+                    border_style = f"border-top: {border_width} solid {color}; border-bottom: {border_width} solid {color};"
+                    if bar_class == "bar-start": border_style += f"border-left: {border_width} solid {color};"
+                    elif bar_class == "bar-end": border_style += f"border-right: {border_width} solid {color};"
+                    elif bar_class == "bar-single": border_style = f"border: {border_width} solid {color};"
 
                     name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                     
