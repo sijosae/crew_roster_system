@@ -18,13 +18,17 @@ def get_kst_now():
 if 'system_logs' not in st.session_state:
     st.session_state['system_logs'] = []
 
+# [추가] 에러를 메인 화면에 고정하기 위한 변수
+if 'last_error_msg' not in st.session_state:
+    st.session_state['last_error_msg'] = None
+
 def add_log(msg, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     icon = "✅" if level == "INFO" else "🚨"
     st.session_state['system_logs'].insert(0, f"[{timestamp}] {icon} {msg}")
 
 # ==========================================
-# 1. DB 연결 (영구 캐싱)
+# 1. DB 연결
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -66,7 +70,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 2. 인증 및 계정
+# 2. 인증
 # ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
@@ -113,7 +117,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 3. 데이터 저장 (가장 빠른 버전)
+# 3. 데이터 저장
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -158,7 +162,6 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
-# [저장] 쓰기 전용 함수 (1개 값 반환)
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
@@ -421,29 +424,29 @@ def show_input_dialog():
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
         
-        # [수정] 성공 시 토스트 띄우고 즉시 새로고침, 실패 시 정지
+        # [수정] 성공 시 자동 새로고침, 실패 시 정지(Stop)
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 try:
                     with st.spinner('저장 중입니다...'):
-                        # save_range_batch 함수가 1개의 값(count)만 반환하도록 맞춰져 있음
-                        count = save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                        save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
                     
-                    # 성공 시 Toast 메시지 (Rerun 되어도 사라지지 않음)
-                    st.toast("✅ 저장 완료! 잠시 후 갱신됩니다.", icon="🔄")
+                    st.success("✅ 저장 완료! (1.5초 후 새로고침)")
                     add_log(f"입력 성공: {len(lst)}명, {rng[0]}~{rng[-1]}, {typ}")
                     
-                    # 0.5초만 짧게 대기 후 즉시 리로딩 (자동 새로고침)
-                    time.sleep(0.5)
+                    # 1.5초 대기 후 자동 새로고침
+                    time.sleep(1.5)
                     st.rerun()
                     
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     add_log(error_msg, "ERROR")
-                    st.error("🚨 저장 중 오류 발생!")
+                    st.session_state['last_error_msg'] = error_msg # 메인화면에 박제
+                    
+                    st.error("🚨 저장 중 오류가 발생했습니다! (멈춤)")
                     st.text_area("에러 상세 (복사 가능)", error_msg, height=200)
-                    st.stop() # 에러 발생 시 여기서 멈춰서 팝업 유지
+                    st.stop() # 여기서 멈춤
             else:
                 st.warning("이름과 기간을 입력해주세요.")
 
@@ -459,12 +462,13 @@ def show_input_dialog():
                         for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
                         st.cache_data.clear()
                     
-                    st.toast("✅ 행사 저장 완료!", icon="🔄")
-                    time.sleep(0.5)
+                    st.success("✅ 행사가 저장되었습니다! (1.5초 후 새로고침)")
+                    time.sleep(1.5)
                     st.rerun()
                     
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
+                    st.session_state['last_error_msg'] = error_msg
                     add_log(f"행사 저장 실패: {str(e)}", "ERROR")
                     st.error("오류 발생")
                     st.text_area("에러 상세", error_msg, height=200)
@@ -475,6 +479,7 @@ def render_log_tab():
     st.subheader("🔧 시스템 로그 (관리자 전용)")
     if st.button("🗑️ 로그 비우기"):
         st.session_state['system_logs'] = []
+        st.session_state['last_error_msg'] = None
         st.rerun()
     if st.session_state['system_logs']:
         log_text = "\n".join(st.session_state['system_logs'])
@@ -484,6 +489,14 @@ def render_log_tab():
 
 # [중요] 렌더링 에러 방지용 Wrapper 함수
 def render_calendar_tab():
+    # 만약 저장 중 에러가 있었다면 최상단에 표시 (팝업 꺼져도 보임)
+    if st.session_state.get('last_error_msg'):
+        st.error("🚨 방금 전 저장 중 오류가 발생했습니다!")
+        st.code(st.session_state['last_error_msg'])
+        if st.button("에러 메시지 닫기"):
+            st.session_state['last_error_msg'] = None
+            st.rerun()
+            
     try:
         _render_calendar_tab_unsafe()
     except Exception:
@@ -528,7 +541,6 @@ def _render_calendar_tab_unsafe():
     else:
         df_month = pd.DataFrame(columns=['id', 'name', 'date', 'type', 'shift', 'note', 'created_at'])
 
-    # [수정] 휴무 연속성 계산은 전체 데이터(df)로 맵핑 (월 넘어가도 계산되게)
     full_schedule_map = {}
     if not df.empty:
         for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
@@ -703,15 +715,16 @@ def render_input_tab():
     st.subheader("📝 관리자 입력")
     t1, t2 = st.tabs(["휴무 등록", "행사 등록"])
     with t1:
+        # [수정] 다이얼로그와 키 중복을 피하기 위해 key 이름 변경 (tab_...)
         c1, c2 = st.columns([2, 1])
-        with c1: names_str = st.text_area("이름 (엔터 구분)", height=68)
-        with c2: rng = st.date_input("기간", [], help="시작/종료일 선택")
+        with c1: names_str = st.text_area("이름 (엔터 구분)", height=68, key="tab_names")
+        with c2: rng = st.date_input("기간", [], help="시작/종료일 선택", key="tab_range")
         if names_str and len(rng) > 0:
             st.caption(f"{len(names_str.split())}명 선택됨")
         c3, c4 = st.columns(2)
-        with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
-        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"])
-        nte = st.text_input("비고")
+        with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="tab_type")
+        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="tab_shift")
+        nte = st.text_input("비고", key="tab_note")
         st.markdown('<div class="red-button">', unsafe_allow_html=True)
         if st.button("일괄 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
@@ -730,9 +743,9 @@ def render_input_tab():
     with t2:
         c_e1, c_e2 = st.columns([2, 1])
         with c_e1:
-            ed_list = st.date_input("행사 기간", [], help="시작/종료일")
-            et = st.text_input("내용")
-            if st.button("행사 저장", type="secondary"):
+            ed_list = st.date_input("행사 기간", [], help="시작/종료일", key="tab_event_range")
+            et = st.text_input("내용", key="tab_event_title")
+            if st.button("행사 저장", type="secondary", key="tab_event_save"):
                 if et and len(ed_list) > 0:
                     try:
                         with st.spinner('저장 중입니다...'):
