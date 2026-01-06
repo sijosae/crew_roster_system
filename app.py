@@ -8,8 +8,10 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 
-# === 1. 구글 스프레드시트 DB 연결 설정 ===
-def get_db_connection():
+# === 1. [속도 핵심] 구글 연결(인증)을 메모리에 박제 (캐싱) ===
+# 이 함수는 앱이 켜질 때 딱 1번만 실행되고, 그 뒤로는 저장된 연결을 재사용합니다.
+@st.cache_resource
+def init_connection():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
         if "gcp_json" in st.secrets:
@@ -18,33 +20,35 @@ def get_db_connection():
             creds_dict = dict(st.secrets["gcp_service_account"])
             if "private_key" in creds_dict:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-            
+        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        sh = client.open("bus_schedule_db")
-        return sh
+        return client
     except Exception as e:
-        st.error(f"❌ 구글 시트 연결 실패: {e}")
-        st.stop()
+        st.error(f"❌ 구글 인증 실패: {e}")
+        return None
 
-# === [🚀 속도 최적화 핵심] 데이터 로딩 함수 교체 ===
-# 기존 get_all_records()는 느려서 get_all_values()로 변경하여 속도 3배 향상
+def get_db_connection():
+    client = init_connection()
+    if client:
+        return client.open("bus_schedule_db")
+    st.stop()
+
+# === [시간 수정] 한국 시간(KST) 구하는 함수 ===
+def get_kst_now():
+    # 서버 시간(UTC)에 9시간을 더해줍니다.
+    return datetime.utcnow() + timedelta(hours=9)
+
+# === 데이터 로딩 ===
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
     sh = get_db_connection()
     try:
         worksheet = sh.worksheet(sheet_name)
-        # 1. 데이터를 통째로 텍스트로 가져옴 (가장 빠름)
         data = worksheet.get_all_values()
-        
-        # 2. 데이터가 없으면 빈 DataFrame 반환
-        if not data:
-            return pd.DataFrame()
-            
-        # 3. 첫 번째 줄을 헤더(제목)로 사용
+        if not data: return pd.DataFrame()
         headers = data.pop(0)
         return pd.DataFrame(data, columns=headers)
-        
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame()
 
@@ -59,7 +63,6 @@ def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
 
 def login_user(username, password):
-    # [수정] 만능열쇠 삭제됨. 오직 DB 대조로만 로그인.
     df = load_data("users")
     if df.empty: return None
     
@@ -74,7 +77,9 @@ def login_user(username, password):
 def add_user_account(username, password, role, name):
     df = load_data("users")
     if not df.empty and username in df['username'].astype(str).values: return False
-    new_row = [username, make_hash(password), role, name, datetime.now().strftime("%Y-%m-%d")]
+    # 날짜도 KST로 저장
+    k_date = get_kst_now().strftime("%Y-%m-%d")
+    new_row = [username, make_hash(password), role, name, k_date]
     save_data("users", new_row)
     return True
 
@@ -104,15 +109,15 @@ def update_user_password(username, new_password):
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
     ws_drivers = sh.worksheet("drivers")
+    created_at = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+    
     try:
         existing = ws_drivers.find(name)
         if not existing:
-            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ws_drivers.append_row(["", name, group_name, created_at, ""])
     except: pass
 
     ws_history = sh.worksheet("group_history")
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ws_history.append_row(["", name, group_name, start_date, created_at])
     st.cache_data.clear()
     return True
@@ -178,16 +183,14 @@ def get_group_by_date_memory(history_df, name, target_date_str):
         return valid_rows.iloc[0]['group_name']
     return None
 
-# [속도 개선된 저장 함수]
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # [수정 2] 한국 시간(KST) 적용
+    created_at = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     rows_to_add = []
     
-    # 1. 로드 방식 변경으로 인한 속도 향상
     df_schedules = load_data("schedules")
     
-    # 2. 마지막 ID 계산 (숫자로 변환 가능한 것만 체크)
     next_id = 1
     if not df_schedules.empty and 'id' in df_schedules.columns:
         try:
@@ -197,7 +200,6 @@ def save_range_batch(name_list, start, end, type, shift, note):
         except:
             next_id = len(df_schedules) + 1
 
-    # 3. 중복 체크 최적화
     existing_set = set()
     if not df_schedules.empty:
         df_schedules['name'] = df_schedules['name'].astype(str)
@@ -220,7 +222,7 @@ def save_range_batch(name_list, start, end, type, shift, note):
     return len(rows_to_add)
 
 def add_company_event(date, title):
-    created_at = datetime.now().strftime("%Y-%m-%d")
+    created_at = get_kst_now().strftime("%Y-%m-%d")
     save_data("company_events", ["", date, title, created_at])
 
 def get_korean_weekday(date_str):
@@ -251,11 +253,18 @@ def is_holiday(date_obj):
     ]
     return date_obj.strftime("%Y-%m-%d") in holidays
 
-# === 화면 그리기 및 통계 ===
+# === 화면 그리기 ===
 def inject_custom_css():
     st.markdown("""
     <style>
-        .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
+        /* [수정 1] 상단 바(Header) 가림 문제 해결: 여백을 6rem으로 확 늘림 */
+        .block-container { 
+            padding-top: 6rem !important; 
+            padding-bottom: 1rem !important; 
+            padding-left: 1rem !important; 
+            padding-right: 1rem !important; 
+            max-width: 100% !important; 
+        }
         
         .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
         .red-button > button:hover { background-color: #D93A3A !important; }
@@ -272,7 +281,6 @@ def inject_custom_css():
         
         .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
         
-        /* [수정] 오전/오후 조 표시 글자 진하게 */
         .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
         
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
@@ -297,7 +305,6 @@ def get_daily_shift_summary(date_str):
         if s == "오전": am.append(str(i))
         elif s == "오후": pm.append(str(i))
         else: off.append(str(i))
-    # [수정] 글씨 굵게(font-weight:bold) 적용
     am_str = f"<span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span>" if am else ""
     pm_str = f"<span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span>" if pm else ""
     return f"{am_str}<br>{pm_str}"
@@ -417,7 +424,7 @@ def show_input_dialog():
 def render_calendar_tab():
     st.subheader("📅 전체 월간 휴무 현황")
     inject_custom_css()
-    now = datetime.utcnow() + timedelta(hours=9)
+    now = get_kst_now() # [수정] 서버시간 -> KST
     if 'view_year' not in st.session_state: st.session_state.view_year = now.year
     if 'view_month' not in st.session_state: st.session_state.view_month = now.month
     c_prev, c_ym, c_next, c_view, c_btn = st.columns([0.5, 1.5, 0.5, 1.5, 1])
@@ -801,7 +808,7 @@ def render_individual_calendar_tab():
     inject_custom_css()
     drivers = load_data("drivers")
     if drivers.empty: st.warning("승무원을 먼저 등록하세요."); return
-    now = datetime.utcnow() + timedelta(hours=9)
+    now = get_kst_now() # [수정] 서버시간 -> KST
     if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
     if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
     c_sel, c_prev, c_date, c_next = st.columns([1.5, 0.5, 1, 0.5])
