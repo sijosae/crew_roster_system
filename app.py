@@ -7,24 +7,6 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import time
-import traceback # 에러 추적용
-
-# ==========================================
-# 0. 로그 시스템 및 초기화 (핵심 기능)
-# ==========================================
-def get_kst_now():
-    return datetime.utcnow() + timedelta(hours=9)
-
-if 'system_logs' not in st.session_state:
-    st.session_state['system_logs'] = []
-
-def add_log(msg, level="INFO"):
-    """로그를 세션에 저장하는 함수"""
-    timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    icon = "✅" if level == "INFO" else "🚨"
-    log_entry = f"[{timestamp}] {icon} {msg}"
-    # 최신 로그가 위로 오도록 추가
-    st.session_state['system_logs'].insert(0, log_entry)
 
 # ==========================================
 # 1. DB 연결 (영구 캐싱 & 속도 최적화)
@@ -45,13 +27,16 @@ def get_cached_sheet_object():
         sh = client.open("bus_schedule_db")
         return sh
     except Exception as e:
-        add_log(f"구글 연결 실패: {str(e)}", "ERROR")
+        st.error(f"❌ 구글 연결 실패: {e}")
         return None
 
 def get_db_connection():
     sh = get_cached_sheet_object()
     if sh: return sh
     st.stop()
+
+def get_kst_now():
+    return datetime.utcnow() + timedelta(hours=9)
 
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
@@ -161,7 +146,7 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
-# [저장 최적화] 읽기 없이 쓰기만 수행
+# [저장 최적화] 읽기 없이 쓰기만 수행 (속도 0.5초)
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
@@ -210,6 +195,7 @@ def calculate_auto_shift(group_name, target_date_str):
         return pat[((tgt - ref).days + off) % 10]
     except: return None
 
+# [최적화] Dictionary 사용
 def get_group_from_dict(history_dict, name, target_date_str):
     if name not in history_dict: return None
     records = history_dict[name]
@@ -416,49 +402,23 @@ def show_input_dialog():
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
-                # 안전장치: 에러 발생 시 로그 기록 후 중단 (튕김 방지)
-                try:
-                    with st.spinner('저장 중입니다...'):
-                        save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                    st.toast("저장 완료!", icon="✅")
-                    add_log(f"입력 성공: {len(lst)}명, {rng[0]}~{rng[-1]}, {typ}")
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    error_msg = f"{str(e)}\n{traceback.format_exc()}"
-                    add_log(error_msg, "ERROR")
-                    st.error("🚨 저장 중 오류 발생! (🔧 시스템 로그 탭을 확인하세요)")
-            else:
-                st.warning("이름과 기간을 입력해주세요.")
-
+                with st.spinner('저장 중입니다...'):
+                    save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                st.toast("저장 완료!", icon="✅")
+                time.sleep(1)
+                st.rerun()
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
         ed_list = st.date_input("행사 기간", [], help="시작/종료일", key="quick_event_range")
         et = st.text_input("행사 내용", key="quick_event_title")
         if st.button("회사 행사 저장", type="primary", use_container_width=True, key="quick_event_save"):
             if et and len(ed_list) > 0:
-                try:
-                    with st.spinner('저장 중입니다...'):
-                        s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
-                        for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
-                        st.cache_data.clear()
-                    st.success("행사가 저장되었습니다!"); st.rerun()
-                except Exception as e:
-                    add_log(f"행사 저장 실패: {str(e)}", "ERROR")
-                    st.error("오류 발생 (로그 확인)")
+                with st.spinner('저장 중입니다...'):
+                    s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
+                    for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
+                    st.cache_data.clear()
+                st.success("행사가 저장되었습니다!"); st.rerun()
             else: st.warning("기간과 내용을 모두 입력해주세요.")
-
-def render_log_tab():
-    st.subheader("🔧 시스템 로그 (관리자 전용)")
-    if st.button("🗑️ 로그 비우기"):
-        st.session_state['system_logs'] = []
-        st.rerun()
-    
-    if st.session_state['system_logs']:
-        log_text = "\n".join(st.session_state['system_logs'])
-        st.text_area("로그 내역", log_text, height=400)
-    else:
-        st.info("기록된 로그가 없습니다.")
 
 def render_calendar_tab():
     st.subheader("📅 전체 월간 휴무 현황")
@@ -685,7 +645,9 @@ def render_input_tab():
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 with st.spinner('저장 중입니다...'):
                     save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                st.success("저장 완료"); st.rerun()
+                st.toast("저장 완료!", icon="✅")
+                time.sleep(1)
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with t2:
         c_e1, c_e2 = st.columns([2, 1])
@@ -975,13 +937,12 @@ def main():
     with c2: 
         if st.button("로그아웃"): st.session_state['auth_status'] = None; st.rerun()
     if st.session_state['auth_status'] == 'admin':
-        t1, t2, t3, t4, t5, t6 = st.tabs(["📅 전체 현황", "👤 개인별", "📝 입력", "⚙️ 승무원", "📊 조회", "🔧 시스템 로그"])
+        t1, t2, t3, t4, t5 = st.tabs(["📅 전체 현황", "👤 개인별", "📝 입력", "⚙️ 승무원", "📊 조회"])
         with t1: render_calendar_tab()
         with t2: render_individual_calendar_tab()
         with t3: render_input_tab()
         with t4: render_driver_manage_tab()
         with t5: render_view_manage_tab()
-        with t6: render_log_tab()
     else:
         t1, t2, t3 = st.tabs(["📅 전체 현황", "👤 개인별", "📊 조회"])
         with t1: render_calendar_tab()
