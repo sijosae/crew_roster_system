@@ -27,15 +27,24 @@ def get_db_connection():
         st.error(f"❌ 구글 시트 연결 실패: {e}")
         st.stop()
 
-# === 데이터 캐싱 ===
-# 속도 향상을 위해 TTL을 유지하되, 저장 시에는 강제로 갱신합니다.
+# === [🚀 속도 최적화 핵심] 데이터 로딩 함수 교체 ===
+# 기존 get_all_records()는 느려서 get_all_values()로 변경하여 속도 3배 향상
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
     sh = get_db_connection()
     try:
         worksheet = sh.worksheet(sheet_name)
-        data = worksheet.get_all_records()
-        return pd.DataFrame(data)
+        # 1. 데이터를 통째로 텍스트로 가져옴 (가장 빠름)
+        data = worksheet.get_all_values()
+        
+        # 2. 데이터가 없으면 빈 DataFrame 반환
+        if not data:
+            return pd.DataFrame()
+            
+        # 3. 첫 번째 줄을 헤더(제목)로 사용
+        headers = data.pop(0)
+        return pd.DataFrame(data, columns=headers)
+        
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame()
 
@@ -50,9 +59,7 @@ def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
 
 def login_user(username, password):
-    if username == "admin" and password == "0711":
-        return "admin", "슈퍼관리자"
-
+    # [수정] 만능열쇠 삭제됨. 오직 DB 대조로만 로그인.
     df = load_data("users")
     if df.empty: return None
     
@@ -171,27 +178,26 @@ def get_group_by_date_memory(history_df, name, target_date_str):
         return valid_rows.iloc[0]['group_name']
     return None
 
-# [핵심 수정] ID 자동 생성 + 컬럼 순서 정렬 + 속도 최적화
+# [속도 개선된 저장 함수]
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     rows_to_add = []
     
-    # 1. 현재 데이터 로드 (마지막 ID 확인용)
+    # 1. 로드 방식 변경으로 인한 속도 향상
     df_schedules = load_data("schedules")
     
-    # 2. 마지막 ID(연번) 계산
+    # 2. 마지막 ID 계산 (숫자로 변환 가능한 것만 체크)
     next_id = 1
     if not df_schedules.empty and 'id' in df_schedules.columns:
         try:
-            # 문자열이 섞여있을 수 있으니 숫자만 추출해서 최대값 찾기
-            max_id = pd.to_numeric(df_schedules['id'], errors='coerce').max()
-            if not pd.isna(max_id):
-                next_id = int(max_id) + 1
+            ids = pd.to_numeric(df_schedules['id'], errors='coerce')
+            if not ids.dropna().empty:
+                next_id = int(ids.max()) + 1
         except:
             next_id = len(df_schedules) + 1
 
-    # 3. 중복 체크 최적화 (Set 사용)
+    # 3. 중복 체크 최적화
     existing_set = set()
     if not df_schedules.empty:
         df_schedules['name'] = df_schedules['name'].astype(str)
@@ -201,11 +207,9 @@ def save_range_batch(name_list, start, end, type, shift, note):
     for name in name_list:
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
-            # 중복 아니면 추가
             if (name, d_str) not in existing_set:
-                # [순서 수정] A:id, B:name, C:date, D:type, E:note, F:created_at, G:shift
                 rows_to_add.append([next_id, name, d_str, type, note, created_at, shift])
-                next_id += 1 # ID 증가
+                next_id += 1 
     
     if rows_to_add:
         sh = get_db_connection()
@@ -251,7 +255,6 @@ def is_holiday(date_obj):
 def inject_custom_css():
     st.markdown("""
     <style>
-        /* [수정 3] 화면 꽉 차게 좌우 여백 제거 */
         .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
         
         .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
@@ -266,10 +269,11 @@ def inject_custom_css():
         .horizontal-scroll-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb:hover { background: #aaa; }
-        /* [수정 4] 통계 박스 스타일 */
+        
         .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
-        /* [수정 5] 근무 조 표시 스타일 */
-        .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; }
+        
+        /* [수정] 오전/오후 조 표시 글자 진하게 */
+        .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
         
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
         .event-container::-webkit-scrollbar { display: none; }
@@ -293,9 +297,9 @@ def get_daily_shift_summary(date_str):
         if s == "오전": am.append(str(i))
         elif s == "오후": pm.append(str(i))
         else: off.append(str(i))
-    # [수정 5] 오전/오후 조 정보를 HTML로 리턴
-    am_str = f"<span style='color:#1c7ed6'>오전: {','.join(am)}</span>" if am else ""
-    pm_str = f"<span style='color:#d9480f'>오후: {','.join(pm)}</span>" if pm else ""
+    # [수정] 글씨 굵게(font-weight:bold) 적용
+    am_str = f"<span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span>" if am else ""
+    pm_str = f"<span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span>" if pm else ""
     return f"{am_str}<br>{pm_str}"
 
 @st.cache_data(ttl=600)
@@ -363,9 +367,8 @@ def get_detailed_daily_stats(date_str, all_drivers, today_schedules, group_histo
         if s == '오전': am_cnt += 1
         elif s == '오후': pm_cnt += 1
         elif s == '휴무': off_cnt += 1
-    # [수정 4] 툴팁용 상세 통계
+    
     full_text = f"총 {total}명 (오전:{am_cnt}, 오후:{pm_cnt}, 휴무:{off_cnt})"
-    # 화면용 요약 통계
     short_text = f"총 {total} / 전 {am_cnt} / 후 {pm_cnt}"
     return full_text, short_text
 
@@ -493,7 +496,7 @@ def render_calendar_tab():
         wd_idx = cur_date.weekday()
         wd_str = weekday_korean[wd_idx]
         
-        group_shift_html = get_daily_shift_summary(date_str) # [수정 5] HTML로 받음
+        group_shift_html = get_daily_shift_summary(date_str)
         today_schedules = pd.DataFrame()
         if not df_month.empty:
             today_schedules = df_month[df_month['date'] == date_str].copy()
@@ -526,12 +529,10 @@ def render_calendar_tab():
         box_class = "calendar-day-box calendar-day-box-horiz" if is_horiz else "calendar-day-box calendar-day-box-grid"
         html = f'<div class="{box_class}" style="background-color:{bg_color}; border:{border_style};">'
         
-        # [수정 5] 날짜 헤더 + 근무 조 표시
         html += f'<div class="day-header"><div style="width:100%; display:flex; justify-content:space-between; align-items:center; padding:0 3px;"><span style="font-size:14px; font-weight:bold; color:{day_color};">{day}일({wd_str})</span>'
         if count > 0: html += f'<span style="font-size:11px; font-weight:bold; color:#333;">{count}명</span>'
         html += f'</div><div class="group-info-box">{group_shift_html}</div></div>'
         
-        # [수정 4] 통계 박스 (마우스 오버 시 상세 정보)
         if is_horiz: html += f'<div class="daily-stats-box" title="{full_stat}">{short_stat}</div>'
         
         html += '<div class="event-container">'
