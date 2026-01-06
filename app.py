@@ -9,7 +9,15 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import time
 
-# === 1. [속도 최적화] 구글 연결 객체 영구 캐싱 ===
+# ==========================================
+# 0. 전역 설정 및 상수 (NameError 방지용)
+# ==========================================
+WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
+SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
+
+# ==========================================
+# 1. DB 연결 및 데이터 관리 (속도 최적화)
+# ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -23,7 +31,6 @@ def get_cached_sheet_object():
         
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # 파일을 여는 것까지 캐싱 (연결 시간 단축)
         sh = client.open("bus_schedule_db")
         return sh
     except Exception as e:
@@ -35,11 +42,9 @@ def get_db_connection():
     if sh: return sh
     st.stop()
 
-# === 시간 함수 (KST) ===
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# === 데이터 로딩 (읽기 전용, 캐시 사용) ===
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
     sh = get_db_connection()
@@ -52,11 +57,12 @@ def load_data(sheet_name):
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame()
 
-# 저장 후 캐시 비우기
 def clear_cache_after_save():
     st.cache_data.clear()
 
-# === 인증 함수 ===
+# ==========================================
+# 2. 인증 및 사용자 관리
+# ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
 
@@ -101,7 +107,9 @@ def update_user_password(username, new_password):
     except: pass
     return False
 
-# === 승무원 관리 ===
+# ==========================================
+# 3. 승무원 및 데이터 저장 관리
+# ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
     ws_drivers = sh.worksheet("drivers")
@@ -111,7 +119,6 @@ def add_driver_with_group(name, group_name, start_date="2020-01-01"):
         if not existing:
             ws_drivers.append_row(["", name, group_name, created_at, ""])
     except: pass
-    
     ws_history = sh.worksheet("group_history")
     ws_history.append_row(["", name, group_name, start_date, created_at])
     clear_cache_after_save()
@@ -146,7 +153,42 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
-# === 로직 ===
+def save_range_batch(name_list, start, end, type, shift, note):
+    t_start = time.time()
+    dates = pd.date_range(start, end)
+    now_kst = get_kst_now()
+    created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+    base_id = now_kst.strftime("%y%m%d%H%M") 
+    
+    rows_to_add = []
+    count = 0
+    for name in name_list:
+        for d in dates:
+            d_str = d.strftime("%Y-%m-%d")
+            row_id = f"{base_id}{count:02d}"
+            rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
+            count += 1
+            
+    if rows_to_add:
+        sh = get_db_connection()
+        ws = sh.worksheet("schedules")
+        ws.append_rows(rows_to_add)
+        clear_cache_after_save()
+        
+    t_end = time.time()
+    st.toast(f"⚡ {t_end - t_start:.2f}초 저장 완료!", icon="🚀")
+    return len(rows_to_add)
+
+def add_company_event(date, title):
+    sh = get_db_connection()
+    ws = sh.worksheet("company_events")
+    created_at = get_kst_now().strftime("%Y-%m-%d")
+    ws.append_row(["", date, title, created_at])
+    clear_cache_after_save()
+
+# ==========================================
+# 4. 로직 및 계산 함수
+# ==========================================
 def calculate_auto_shift(group_name, target_date_str):
     if not group_name or "조" not in group_name: return None
     try:
@@ -178,49 +220,6 @@ def get_driver_group_by_name(name):
         return row.iloc[0]['group_name']
     return None
 
-# === [🚀 핵심] 저장 속도 최적화 함수 ===
-def save_range_batch(name_list, start, end, type, shift, note):
-    t_start = time.time()
-    
-    dates = pd.date_range(start, end)
-    now_kst = get_kst_now()
-    created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
-    
-    # [ID 생성] 2601061001 (년월일시+순번) 형태로 깔끔하게
-    base_id = now_kst.strftime("%y%m%d%H%M") 
-    
-    rows_to_add = []
-    count = 0
-    
-    for name in name_list:
-        for d in dates:
-            d_str = d.strftime("%Y-%m-%d")
-            # ID: 시간 + 순번
-            row_id = f"{base_id}{count:02d}"
-            # A:id, B:name, C:date, D:type, E:note, F:created_at, G:shift
-            rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
-            count += 1
-            
-    if rows_to_add:
-        sh = get_db_connection()
-        ws = sh.worksheet("schedules")
-        ws.append_rows(rows_to_add)
-        clear_cache_after_save()
-        
-    t_end = time.time()
-    st.toast(f"⚡ {t_end - t_start:.2f}초 저장 완료!", icon="🚀")
-    return len(rows_to_add)
-
-def add_company_event(date, title):
-    sh = get_db_connection()
-    ws = sh.worksheet("company_events")
-    created_at = get_kst_now().strftime("%Y-%m-%d")
-    ws.append_row(["", date, title, created_at])
-    clear_cache_after_save()
-
-def get_korean_weekday(date_str):
-    return ["월", "화", "수", "목", "금", "토", "일"][datetime.strptime(date_str, "%Y-%m-%d").weekday()]
-
 def get_type_color(type_name):
     colors = { 
         "휴무": "#2b8a3e", "육아휴직": "#f59f00", "휴직": "#f59f00", "경조사": "#6741d9", 
@@ -245,46 +244,6 @@ def is_holiday(date_obj):
         "2025-10-06", "2025-10-09", "2025-12-25"
     ]
     return date_obj.strftime("%Y-%m-%d") in holidays
-
-# === 화면 그리기 ===
-def inject_custom_css():
-    st.markdown("""
-    <style>
-        .block-container { 
-            padding-top: 3.5rem !important; 
-            padding-bottom: 1rem !important; 
-            padding-left: 1rem !important; 
-            padding-right: 1rem !important; 
-            max-width: 100% !important; 
-        }
-        .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
-        .red-button > button:hover { background-color: #D93A3A !important; }
-        div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
-        .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
-        .calendar-day-box { border-right: 1px solid #e9ecef; border-top: 1px solid #e9ecef; border-bottom: 1px solid #e9ecef; border-left: 0; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
-        .calendar-day-box:first-child { border-left: 1px solid #e9ecef; }
-        .calendar-day-box-horiz { flex: 0 0 90px; } 
-        .calendar-day-box-grid { width: 100%; border: 1px solid #e9ecef; margin: 2px; }
-        .horizontal-scroll-container::-webkit-scrollbar { height: 8px; }
-        .horizontal-scroll-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
-        .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
-        .horizontal-scroll-container::-webkit-scrollbar-thumb:hover { background: #aaa; }
-        .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
-        .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
-        .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
-        .event-container::-webkit-scrollbar { display: none; }
-        .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
-        .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1); }
-        .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
-        .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
-        .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
-        .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
-        .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
-        .login-btn > button { background-color: #FF4B4B !important; color: white !important; width: 100%; font-weight: bold; border-radius: 5px; padding: 10px; }
-        .login-btn > button:hover { background-color: #D93A3A !important; }
-        @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
-    </style>
-    """, unsafe_allow_html=True)
 
 def get_daily_shift_summary(date_str):
     am, pm, off = [], [], []
@@ -318,8 +277,8 @@ def calculate_layout_rows(df_month):
                 c_name, c_type, c_start, c_end = row['name'], row['type'], row['date'], row['date']
                 c_recs = [row]
         segments.append({'name': c_name, 'type': c_type, 'start': c_start, 'end': c_end, 'records': c_recs})
-    type_priority = { "휴무": 0, "교육": 1, "경조사": 2, "징계": 3, "당일 해지": 4, "기타": 5, "휴직": 6, "병가": 7 }
-    segments.sort(key=lambda x: (type_priority.get(x['type'], 99), x['start'], (datetime.strptime(x['end'], "%Y-%m-%d") - datetime.strptime(x['start'], "%Y-%m-%d")).days * -1))
+    
+    segments.sort(key=lambda x: (SORT_ORDER.get(x['type'], 99), x['start'], (datetime.strptime(x['end'], "%Y-%m-%d") - datetime.strptime(x['start'], "%Y-%m-%d")).days * -1))
     lanes = {} 
     layout_map = {} 
     for seg in segments:
@@ -367,6 +326,294 @@ def get_detailed_daily_stats(date_str, all_drivers, today_schedules, group_histo
     short_text = f"총 {total} / 전 {am_cnt} / 후 {pm_cnt}"
     return full_text, short_text
 
+def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
+    if (p_name, p_date_str) not in full_schedule_map: return "", "", ""
+    curr = datetime.strptime(p_date_str, "%Y-%m-%d")
+    start_date, end_date = curr, curr
+    while True:
+        prev_d = (start_date - timedelta(days=1)).strftime("%Y-%m-%d")
+        if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: start_date -= timedelta(days=1)
+        else: break
+    while True:
+        next_d = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: end_date += timedelta(days=1)
+        else: break
+    duration = (end_date - start_date).days + 1
+    prefix, suffix = "", ""
+    period_text = f"(~{end_date.month}/{end_date.day})"
+    if duration >= 2:
+        is_start = (p_date_str == start_date.strftime("%Y-%m-%d"))
+        is_end = (p_date_str == end_date.strftime("%Y-%m-%d"))
+        if is_start: prefix = "➡️"; 
+        if is_end: suffix = "🛑"
+    return prefix, suffix, period_text
+
+# ==========================================
+# 5. 화면 렌더링 함수 (UI)
+# ==========================================
+def inject_custom_css():
+    st.markdown("""
+    <style>
+        .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
+        .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
+        .red-button > button:hover { background-color: #D93A3A !important; }
+        div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
+        .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
+        .calendar-day-box { border-right: 1px solid #e9ecef; border-top: 1px solid #e9ecef; border-bottom: 1px solid #e9ecef; border-left: 0; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
+        .calendar-day-box:first-child { border-left: 1px solid #e9ecef; }
+        .calendar-day-box-horiz { flex: 0 0 90px; } 
+        .calendar-day-box-grid { width: 100%; border: 1px solid #e9ecef; margin: 2px; }
+        .horizontal-scroll-container::-webkit-scrollbar { height: 8px; }
+        .horizontal-scroll-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+        .horizontal-scroll-container::-webkit-scrollbar-thumb:hover { background: #aaa; }
+        .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
+        .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
+        .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
+        .event-container::-webkit-scrollbar { display: none; }
+        .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
+        .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1); }
+        .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
+        .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
+        .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
+        .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
+        .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
+        .login-btn > button { background-color: #FF4B4B !important; color: white !important; width: 100%; font-weight: bold; border-radius: 5px; padding: 10px; }
+        .login-btn > button:hover { background-color: #D93A3A !important; }
+        @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
+    </style>
+    """, unsafe_allow_html=True)
+
+@st.dialog("➕ 빠른 등록")
+def show_input_dialog():
+    tab1, tab2 = st.tabs(["👤 승무원 일정", "🏢 회사 행사"])
+    with tab1:
+        st.write("달력을 보면서 바로 입력하세요.")
+        names_str = st.text_area("이름 (엔터 구분)", height=100, key="quick_names")
+        rng = st.date_input("기간", [], help="시작/종료일 선택", key="quick_range")
+        if names_str and len(rng) > 0:
+            st.caption(f"{len(names_str.split())}명 선택됨")
+        c1, c2 = st.columns(2)
+        with c1: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
+        with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
+        nte = st.text_input("비고", key="quick_note")
+        if st.button("승무원 일정 저장", type="primary", use_container_width=True):
+            if names_str and len(rng) > 0:
+                lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
+                with st.spinner('저장 중입니다...'):
+                    save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                st.success("저장되었습니다!"); st.rerun()
+    with tab2:
+        st.write("회사 주요 행사를 달력 상단에 표시합니다.")
+        ed_list = st.date_input("행사 기간", [], help="시작/종료일", key="quick_event_range")
+        et = st.text_input("행사 내용", key="quick_event_title")
+        if st.button("회사 행사 저장", type="primary", use_container_width=True, key="quick_event_save"):
+            if et and len(ed_list) > 0:
+                with st.spinner('저장 중입니다...'):
+                    s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
+                    for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
+                    st.cache_data.clear()
+                st.success("행사가 저장되었습니다!"); st.rerun()
+            else: st.warning("기간과 내용을 모두 입력해주세요.")
+
+def render_calendar_tab():
+    st.subheader("📅 전체 월간 휴무 현황")
+    inject_custom_css()
+    now = get_kst_now()
+    if 'view_year' not in st.session_state: st.session_state.view_year = now.year
+    if 'view_month' not in st.session_state: st.session_state.view_month = now.month
+    c_prev, c_ym, c_next, c_view, c_btn = st.columns([0.5, 1.5, 0.5, 1.5, 1])
+    with c_prev:
+        if st.button("◀", use_container_width=True):
+            if st.session_state.view_month == 1:
+                st.session_state.view_year -= 1; st.session_state.view_month = 12
+            else: st.session_state.view_month -= 1
+            st.rerun()
+    with c_ym: st.markdown(f"<h3 style='text-align:center; margin:0; padding-top:5px;'>{st.session_state.view_year}년 {st.session_state.view_month}월</h3>", unsafe_allow_html=True)
+    with c_next:
+        if st.button("▶", use_container_width=True):
+            if st.session_state.view_month == 12:
+                st.session_state.view_year += 1; st.session_state.view_month = 1
+            else: st.session_state.view_month += 1
+            st.rerun()
+    with c_view: view_mode = st.radio("보기 방식", ["가로 스크롤 (타임라인)", "기본 달력 (그리드)"], horizontal=True, label_visibility="collapsed")
+    with c_btn:
+        if st.session_state.get('auth_status') == 'admin':
+            if st.button("➕ 빠른 입력", type="primary", use_container_width=True): show_input_dialog()
+    st.divider()
+    
+    selected_year = st.session_state.view_year
+    selected_month = st.session_state.view_month
+    
+    df = load_data("schedules")
+    if not df.empty:
+        filter_keyword = f"{selected_year}-{selected_month:02d}"
+        df_month = df[df['date'].astype(str).str.startswith(filter_keyword)]
+    else:
+        df_month = pd.DataFrame(columns=['id', 'name', 'date', 'type', 'shift', 'note', 'created_at'])
+
+    df_events = load_data("company_events")
+    if not df_events.empty:
+        df_events_month = df_events[df_events['date'].astype(str).str.startswith(f"{selected_year}-{selected_month:02d}")]
+    else:
+        df_events_month = pd.DataFrame(columns=['id', 'date', 'title', 'created_at'])
+
+    all_drivers = load_data("drivers")
+    group_history_df = load_data("group_history")
+    
+    full_schedule_map = {}
+    if not df_month.empty:
+        for _, row in df_month.iterrows(): full_schedule_map[(row['name'], row['date'])] = row['type']
+    
+    _, last_day = calendar.monthrange(selected_year, selected_month)
+
+    # 렌더링 헬퍼 함수
+    def get_day_html(day, is_horiz=True):
+        cur_date = datetime(selected_year, selected_month, day)
+        date_str = cur_date.strftime("%Y-%m-%d")
+        off_group_str, _ = get_off_groups(date_str)
+        wd_idx = cur_date.weekday()
+        wd_str = WEEKDAY_KOREAN[wd_idx]
+        
+        group_shift_html = get_daily_shift_summary(date_str)
+        today_schedules = pd.DataFrame()
+        if not df_month.empty:
+            today_schedules = df_month[df_month['date'] == date_str].copy()
+            
+        full_stat, short_stat = get_detailed_daily_stats(date_str, all_drivers, today_schedules, group_history_df)
+        
+        today_events = pd.DataFrame()
+        if not df_events_month.empty:
+            today_events = df_events_month[df_events_month['date'] == date_str]
+            
+        count = len(today_schedules)
+        is_today = date_str == now.strftime("%Y-%m-%d")
+        tomorrow = now + timedelta(days=1)
+        is_tomorrow = date_str == tomorrow.strftime("%Y-%m-%d")
+        
+        if is_today:
+            bg_color = "#fff9c4"
+            border_style = "1px solid #fbc02d; box-shadow: inset 0 0 5px rgba(251, 192, 45, 0.5);"
+        elif is_tomorrow: 
+            bg_color = "#ffe3e3" 
+            border_style = "1px solid #e03131; box-shadow: inset 0 0 5px rgba(224, 49, 49, 0.5);"
+        else:
+            bg_color = "white"
+            border_style = "1px solid #e9ecef"
+            
+        day_color = "#333"
+        if wd_idx == 6 or is_holiday(cur_date): day_color = "#d32f2f"
+        elif wd_idx == 5: day_color = "#1976D2"
+        
+        box_class = "calendar-day-box calendar-day-box-horiz" if is_horiz else "calendar-day-box calendar-day-box-grid"
+        html = f'<div class="{box_class}" style="background-color:{bg_color}; border:{border_style};">'
+        html += f'<div class="day-header"><div style="width:100%; display:flex; justify-content:space-between; align-items:center; padding:0 3px;"><span style="font-size:14px; font-weight:bold; color:{day_color};">{day}일({wd_str})</span>'
+        if count > 0: html += f'<span style="font-size:11px; font-weight:bold; color:#333;">{count}명</span>'
+        html += f'</div><div class="group-info-box">{group_shift_html}</div></div>'
+        
+        if is_horiz: html += f'<div class="daily-stats-box" title="{full_stat}">{short_stat}</div>'
+        
+        html += '<div class="event-container">'
+        if not today_events.empty:
+            for _, evt in today_events.iterrows():
+                html += f"<div style='background-color:#E3F2FD; color:#1565C0; padding:1px; border-radius:3px; font-size:10px; font-weight:bold; text-align:center; border:1px solid #BBDEFB; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>{evt['title']}</div>"
+        html += '</div>'
+        
+        if not is_horiz and not today_schedules.empty:
+            today_schedules['sort_rank'] = today_schedules['type'].map(lambda x: SORT_ORDER.get(x, 99))
+            today_schedules = today_schedules.sort_values(by=['sort_rank', 'name'])
+            for _, row in today_schedules.iterrows():
+                color = get_type_color(row['type'])
+                prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
+                eff_grp = get_group_by_date_memory(group_history_df, row['name'], date_str)
+                orig_shift = calculate_auto_shift(eff_grp, date_str)
+                p_tip = f"원래 근무: {orig_shift if orig_shift else '없음'} ({eff_grp})"
+                s_info = ""
+                hide_st = ["병가", "육아휴직", "휴직", "당일 해지"]
+                if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_st:
+                    s_info = f"[{row['shift']}] "
+                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                if row['type'] == '휴무':
+                    i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
+                    if period_text: i_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
+                else:
+                    n_txt = row['note'] if row['note'] else row['type']
+                    if period_text: n_txt += f" {period_text}"
+                    i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{n_txt}</div>"
+                html += f"<div class='schedule-bar bar-single' style='background-color:{color};' title='{p_tip}'>{i_html}</div>"
+        html += '</div>'
+        return html
+
+    if "가로" in view_mode:
+        layout_map, max_rows = calculate_layout_rows(df_month)
+        html_content = '<div class="horizontal-scroll-container">'
+        for day in range(1, last_day + 1):
+            cur_date = datetime(selected_year, selected_month, day)
+            date_str = cur_date.strftime("%Y-%m-%d")
+            prev_date_str = (cur_date - timedelta(days=1)).strftime("%Y-%m-%d")
+            day_html = get_day_html(day, is_horiz=True)
+            html_content += day_html[:-6] 
+            for r_idx in range(max_rows):
+                if (date_str, r_idx) in layout_map:
+                    item = layout_map[(date_str, r_idx)]
+                    row = item['rec']
+                    violation_marker = ""
+                    my_shift = row.get('shift', '자동')
+                    if my_shift == '자동':
+                        grp = get_group_by_date_memory(group_history_df, row['name'], date_str)
+                        my_shift = calculate_auto_shift(grp, date_str)
+                    prev_grp = get_group_by_date_memory(group_history_df, row['name'], prev_date_str)
+                    prev_shift = calculate_auto_shift(prev_grp, prev_date_str)
+                    if prev_shift == '오후' and my_shift == '오전':
+                        violation_marker = "<div style='position:absolute; top:0; left:0; width:6px; height:6px; background-color:red; border-radius:50%; z-index:20;' title='⚠️ 휴식 시간 부족 (전날 오후 -> 금일 오전)'></div>"
+                    duration = item['duration']
+                    color = get_type_color(row['type'])
+                    prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
+                    eff_grp = get_group_by_date_memory(group_history_df, row['name'], date_str)
+                    orig_shift = calculate_auto_shift(eff_grp, date_str)
+                    personal_tooltip = f"원래 근무: {orig_shift if orig_shift else '없음'} ({eff_grp})"
+                    s_info = ""
+                    hide_shift_types = ["병가", "육아휴직", "휴직", "당일 해지"]
+                    if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_shift_types:
+                        s_info = f"[{row['shift']}] "
+                    bar_class = "bar-single"
+                    if duration >= 2:
+                        if item['is_start']: bar_class = "bar-start"
+                        elif item['is_end']: bar_class = "bar-end"
+                        else: bar_class = "bar-mid"
+                    border_style = ""
+                    if row['type'] in ['휴무', '경조사']:
+                        border_style = "border-top: 3px solid black; border-bottom: 3px solid black;"
+                        if bar_class == "bar-start": border_style += "border-left: 3px solid black;"
+                        elif bar_class == "bar-end": border_style += "border-right: 3px solid black;"
+                        elif bar_class == "bar-single": border_style = "border: 2px solid black;"
+                    else: border_style = "border: none;"
+                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                    if row['type'] == '휴무':
+                        inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
+                        if period_text: inner_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
+                    else:
+                        note_text = row['note'] if row['note'] else row['type']
+                        if period_text: note_text += f" {period_text}"
+                        inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{note_text}</div>"
+                    html_content += f"<div class='schedule-bar {bar_class}' style='background-color:{color}; {border_style}; position:relative;' title='{personal_tooltip}'>{violation_marker}{inner_html}</div>"
+                else: html_content += "<div class='schedule-spacer'></div>"
+            html_content += '</div>'
+        html_content += '</div>'
+        st.markdown(html_content, unsafe_allow_html=True)
+    else:
+        cal = calendar.monthcalendar(selected_year, selected_month)
+        cols = st.columns(7)
+        for i, day_name in enumerate(WEEKDAY_KOREAN):
+            color = "#d32f2f" if i==6 else "#1976D2" if i==5 else "black"
+            cols[i].markdown(f"<div style='text-align: center; color: {color}; font-weight:bold; font-size:14px; border-bottom:2px solid #333; padding-bottom:5px;'>{day_name}</div>", unsafe_allow_html=True)
+        for week in cal:
+            cols = st.columns(7)
+            for i, day in enumerate(week):
+                with cols[i]:
+                    if day == 0: st.markdown("<div class='calendar-day-box' style='background-color:#f8f9fa; min-height:200px;'></div>", unsafe_allow_html=True)
+                    else: st.markdown(get_day_html(day, is_horiz=False), unsafe_allow_html=True)
+
 def render_input_tab():
     st.subheader("📝 관리자 입력")
     t1, t2 = st.tabs(["휴무 등록", "행사 등록"])
@@ -376,7 +623,6 @@ def render_input_tab():
         with c2: rng = st.date_input("기간", [], help="시작/종료일 선택")
         if names_str and len(rng) > 0:
             st.caption(f"{len(names_str.split())}명 선택됨")
-            
         c3, c4 = st.columns(2)
         with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"])
         with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"])
@@ -417,7 +663,6 @@ def render_driver_manage_tab():
         with c2: 
             selected_group = st.selectbox("소속 조", ["1조", "2조", "3조", "4조", "5조", "6조", "7조", "8조", "9조", "10조", "기타"])
             st.markdown("<br>", unsafe_allow_html=True)
-            # [수정] datetime.now() -> get_kst_now().date()
             start_date = st.date_input("조 배정 시작일", get_kst_now().date())
             st.markdown('<div class="red-button">', unsafe_allow_html=True)
             if st.button("등록 실행", type="primary"):
@@ -437,7 +682,6 @@ def render_driver_manage_tab():
         with c2:
             target_grp = st.selectbox("이동할 조", ["1조", "2조", "3조", "4조", "5조", "6조", "7조", "8조", "9조", "10조", "기타"], key="new_grp_bulk")
             st.markdown("<br>", unsafe_allow_html=True)
-            # [수정] get_kst_now().date()
             change_date = st.date_input("변경 기준일", get_kst_now().date(), key="eff_date_bulk")
             st.markdown('<div class="red-button">', unsafe_allow_html=True)
             if st.button("일괄 변경 적용", type="primary"):
@@ -462,12 +706,10 @@ def render_driver_manage_tab():
             st.markdown('</div>', unsafe_allow_html=True)
     with tab_resign:
         drivers = load_data("drivers")
-        # [수정] 컬럼 존재 확인
         if not drivers.empty and 'resigned_date' in drivers.columns:
             active_drivers = drivers[drivers['resigned_date'] == ""]
         else:
             active_drivers = pd.DataFrame()
-            
         if not active_drivers.empty:
             st.info("💡 퇴사 처리를 하면 해당 날짜부터 근무 인원 집계 및 달력 표시에서 제외됩니다.")
             c_r1, c_r2 = st.columns(2)
@@ -523,21 +765,17 @@ def render_driver_manage_tab():
                         if st.button("삭제", key=f"del_user_{row['username']}"):
                             delete_user_account(row['username'])
                             st.success("삭제됨"); st.rerun()
-                            
     st.divider()
     drivers = load_data("drivers")
     if not drivers.empty:
         search_dr = st.text_input("승무원 명부 검색")
         if search_dr and 'name' in drivers.columns: 
             drivers = drivers[drivers['name'].str.contains(search_dr)]
-        
-        # [수정] status 컬럼 생성 시 컬럼 존재 확인
         if 'resigned_date' in drivers.columns:
             drivers['status'] = drivers['resigned_date'].apply(lambda x: f"퇴사 ({x})" if x else "재직")
             st.dataframe(drivers[['name', 'group_name', 'status']], hide_index=True, use_container_width=True, height=800)
         else:
             st.dataframe(drivers, use_container_width=True)
-            
         with st.expander("🗑️ 승무원 삭제"):
             if 'name' in drivers.columns:
                 del_target = st.selectbox("삭제 대상", drivers['name'].tolist(), key="del")
@@ -548,7 +786,6 @@ def render_driver_manage_tab():
 def render_individual_calendar_tab():
     st.subheader("👤 승무원별 월간 근무 현황")
     inject_custom_css()
-    
     try:
         drivers = load_data("drivers")
         df = load_data("schedules")
@@ -556,15 +793,12 @@ def render_individual_calendar_tab():
     except Exception as e:
         st.error(f"데이터 로드 중 오류 발생: {e}")
         return
-
     if drivers.empty: 
         st.warning("승무원을 먼저 등록하세요.")
         return
-        
     now = get_kst_now()
     if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
     if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
-    
     c_sel, c_prev, c_date, c_next = st.columns([1.5, 0.5, 1, 0.5])
     with c_sel: target_name = st.selectbox("승무원 선택", drivers['name'].tolist())
     with c_prev:
@@ -580,22 +814,17 @@ def render_individual_calendar_tab():
                 st.session_state.indiv_view_year += 1; st.session_state.indiv_view_month = 1
             else: st.session_state.indiv_view_month += 1
             st.rerun()
-    
     target_year = st.session_state.indiv_view_year
     target_month = st.session_state.indiv_view_month
-    
     if target_name:
         st.markdown(f"### 🚍 **{target_name}**"); st.divider()
         filter_ym = f"{target_year}-{target_month:02d}"
         my_schedules = pd.DataFrame()
-        
         if not df.empty and 'name' in df.columns and 'date' in df.columns:
             my_schedules = df[(df['name'] == target_name) & (df['date'].astype(str).str.startswith(filter_ym))]
-            
         cal = calendar.monthcalendar(target_year, target_month)
         cols = st.columns(7)
         for i, w in enumerate(["월", "화", "수", "목", "금", "토", "일"]): cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{w}</div>", unsafe_allow_html=True)
-        
         for week in cal:
             cols = st.columns(7)
             for i, day in enumerate(week):
@@ -605,11 +834,8 @@ def render_individual_calendar_tab():
                         d_str = f"{target_year}-{target_month:02d}-{day:02d}"
                         eff_grp = get_group_by_date_memory(group_history_df, target_name, d_str)
                         auto = calculate_auto_shift(eff_grp, d_str)
-                        
                         d_sch = pd.DataFrame()
-                        if not my_schedules.empty:
-                            d_sch = my_schedules[my_schedules['date'] == d_str]
-                            
+                        if not my_schedules.empty: d_sch = my_schedules[my_schedules['date'] == d_str]
                         cell_bg = "transparent"
                         text_color = "black"
                         sub_text = ""
@@ -633,26 +859,18 @@ def render_view_manage_tab():
     st.subheader("📊 조회 및 관리")
     df = load_data("schedules")
     if df.empty: st.info("데이터 없음"); return
-    
     if 'date' not in df.columns: st.error("DB 형식 오류: date 컬럼 없음"); return
-
     df['display_date'] = df['date']
     with st.expander("🔎 검색", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1: sn = st.text_input("이름", key="search_name_admin")
         with c2: sd = st.date_input("기간", [], key="search_date_admin")
-        
         type_options = ["전체"]
-        if 'type' in df.columns:
-            type_options += list(df['type'].unique())
-        
+        if 'type' in df.columns: type_options += list(df['type'].unique())
         with c3: stp = st.selectbox("종류", type_options, key="search_type_admin")
-        
     if sn and 'name' in df.columns: df = df[df['name'].str.contains(sn)]
-    if len(sd) == 2: 
-        df = df[(df['date'] >= sd[0].strftime("%Y-%m-%d")) & (df['date'] <= sd[1].strftime("%Y-%m-%d"))]
+    if len(sd) == 2: df = df[(df['date'] >= sd[0].strftime("%Y-%m-%d")) & (df['date'] <= sd[1].strftime("%Y-%m-%d"))]
     if stp != "전체" and 'type' in df.columns: df = df[df['type'] == stp]
-    
     is_admin = st.session_state.get('auth_status') == 'admin'
     if is_admin:
         st.info("⚠️ 데이터 수정/삭제는 구글 시트에서 직접 하시는 것이 가장 빠르고 정확합니다.")
