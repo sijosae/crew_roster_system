@@ -16,7 +16,7 @@ if 'app_logs' not in st.session_state:
 
 def add_log(msg):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    st.session_state['app_logs'].insert(0, f"[{timestamp}] {msg}") # 최신 로그가 위로
+    st.session_state['app_logs'].insert(0, f"[{timestamp}] {msg}")
 
 # ==========================================
 # 1. DB 연결 및 데이터 관리 (속도 최적화)
@@ -25,7 +25,6 @@ def add_log(msg):
 def get_cached_sheet_object():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        t_start = time.perf_counter()
         if "gcp_json" in st.secrets:
             creds_dict = json.loads(st.secrets["gcp_json"])
         else:
@@ -36,9 +35,6 @@ def get_cached_sheet_object():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         sh = client.open("bus_schedule_db")
-        t_end = time.perf_counter()
-        # 최초 연결시에만 로그 남김
-        # add_log(f"시스템: 구글 시트 초기 연결 성공 ({t_end - t_start:.4f}초)")
         return sh
     except Exception as e:
         st.error(f"❌ 구글 연결 실패: {e}")
@@ -52,12 +48,19 @@ def get_db_connection():
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
+# [진단] 데이터 로딩 시간 측정
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
+    t_start = time.perf_counter()
     sh = get_db_connection()
     try:
         worksheet = sh.worksheet(sheet_name)
         data = worksheet.get_all_values()
+        
+        t_end = time.perf_counter()
+        # 로딩 시간 로그 기록 (최초 1회 또는 캐시 삭제 후 실행됨)
+        add_log(f"📥 '{sheet_name}' 다운로드 완료: {t_end - t_start:.2f}초")
+        
         if not data: return pd.DataFrame()
         headers = data.pop(0)
         return pd.DataFrame(data, columns=headers)
@@ -178,21 +181,18 @@ def save_range_batch(name_list, start, end, type, shift, note):
             rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
             count += 1
     
-    t1 = time.perf_counter() # 데이터 준비 완료
+    t1 = time.perf_counter()
     
     if rows_to_add:
-        sh = get_db_connection() # 캐시된 객체 가져오기 (거의 0초)
-        t2 = time.perf_counter() # 연결 객체 로드 완료
-        
-        ws = sh.worksheet("schedules") # 워크시트 선택 (통신 발생 가능)
-        t3 = time.perf_counter() # 시트 선택 완료
-        
-        ws.append_rows(rows_to_add) # 실제 업로드 (가장 오래 걸림)
-        t4 = time.perf_counter() # 업로드 완료
+        sh = get_db_connection()
+        t2 = time.perf_counter()
+        ws = sh.worksheet("schedules")
+        t3 = time.perf_counter()
+        ws.append_rows(rows_to_add)
+        t4 = time.perf_counter()
         
         clear_cache_after_save()
         
-        # 로그 기록
         prep_time = t1 - t0
         conn_time = t2 - t1
         sheet_time = t3 - t2
@@ -377,7 +377,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 5. 화면 렌더링 함수 (UI)
+# 5. 화면 렌더링 함수 (UI) - 진단 기능 추가
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -429,7 +429,9 @@ def show_input_dialog():
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 with st.spinner('저장 중입니다...'):
-                    save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                    count, t_prep, t_up, t_tot = save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                st.toast("저장 완료! 잠시 후 새로고침 됩니다.", icon="✅")
+                time.sleep(1) # 결과를 볼 시간 확보 후 새로고침
                 st.rerun()
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
@@ -446,6 +448,7 @@ def show_input_dialog():
 
 def render_calendar_tab():
     st.subheader("📅 전체 월간 휴무 현황")
+    t_render_start = time.perf_counter()
     inject_custom_css()
     now = get_kst_now()
     if 'view_year' not in st.session_state: st.session_state.view_year = now.year
@@ -641,6 +644,9 @@ def render_calendar_tab():
                 with cols[i]:
                     if day == 0: st.markdown("<div class='calendar-day-box' style='background-color:#f8f9fa; min-height:200px;'></div>", unsafe_allow_html=True)
                     else: st.markdown(get_day_html(day, is_horiz=False), unsafe_allow_html=True)
+    
+    t_render_end = time.perf_counter()
+    add_log(f"🎨 달력 그리기 완료: {t_render_end - t_render_start:.2f}초")
 
 def render_input_tab():
     st.subheader("📝 관리자 입력")
@@ -660,8 +666,10 @@ def render_input_tab():
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 with st.spinner('저장 중입니다...'):
-                    save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                st.success("저장 완료"); st.rerun()
+                    count, t_prep, t_up, t_tot = save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                st.toast("저장 완료! 잠시 후 새로고침 됩니다.", icon="✅")
+                time.sleep(1) # 결과를 볼 시간 확보 후 새로고침
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with t2:
         c_e1, c_e2 = st.columns([2, 1])
