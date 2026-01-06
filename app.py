@@ -267,15 +267,15 @@ def get_type_color(type_name):
     colors = { 
         "휴무": "#00592D",      # 스타벅스 그린
         "교육": "#C6A87C",      # 라떼/골드 계열
-        "경조사": "#1F3994",    # 딥 네이비/로얄 블루
-        "징계": "#363636",      # 차콜 그레이 (블랙보다 부드러움)
+        "경조사": "#1F3994",    # 딥 네이비
+        "징계": "#363636",      # 차콜 그레이
         "당일 해지": "#8B0000", # 다크 레드
         "병가": "#A52A2A",      # 브라운 레드
         "휴직": "#D2691E",      # 초콜릿
         "육아휴직": "#D2691E", 
         "기타": "#595959"       # 딤 그레이
     }
-    return colors.get(type_name, "#546E7A") # 기본값: 블루그레이
+    return colors.get(type_name, "#546E7A")
 
 def get_off_groups(date_str):
     ref = datetime(2025, 12, 1)
@@ -449,16 +449,30 @@ def inject_custom_css():
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
         .event-container::-webkit-scrollbar { display: none; }
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
-        /* [수정] 기본 테두리 제거 (개별 적용) */
+        
+        /* [수정] 테두리 2px 진한 검정 회색 (#333) 적용 */
         .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: none; border-bottom: none; }
         .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
         .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
         .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
-        /* [수정] 로그인 버튼 스타벅스 그린 적용 */
-        .login-btn > button { background-color: #00592D !important; color: white !important; width: 100%; font-weight: bold; border-radius: 5px; padding: 10px; border: none; }
-        .login-btn > button:hover { background-color: #004d26 !important; }
+
+        /* [수정] 로그인 버튼 - 스타벅스 그린 적용 (강력한 선택자 사용) */
+        .login-btn .stButton > button { 
+            background-color: #00592D !important; 
+            color: white !important; 
+            width: 100%; 
+            font-weight: bold; 
+            border-radius: 5px; 
+            padding: 10px; 
+            border: none; 
+        }
+        .login-btn .stButton > button:hover { 
+            background-color: #004d26 !important; 
+            color: white !important; 
+        }
+        
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
     </style>
     """, unsafe_allow_html=True)
@@ -703,7 +717,16 @@ def _render_calendar_tab_unsafe():
                 if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_st:
                     s_info = f"[{row['shift']}] "
                 
-                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                # [수정] 절대 위치를 사용한 이름 중앙 정렬 (아이콘 영향 받지 않음)
+                name_line = f"""
+                <div style="position: relative; width: 100%; display: flex; justify-content: center; align-items: center;">
+                    <div style="position: absolute; left: 2px;">{prefix}</div>
+                    <div style="width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 14px;">
+                        {s_info}{row['name']}
+                    </div>
+                    <div style="position: absolute; right: 2px;">{suffix}</div>
+                </div>
+                """
                 
                 # [수정] 원근무 표시 색상 (어두운 배경 위에서 잘 보이도록 형광/파스텔톤 사용)
                 c_am = "#87CEEB" # 형광 하늘색 (SkyBlue)
@@ -722,8 +745,8 @@ def _render_calendar_tab_unsafe():
                     if period_text: n_txt += f" {period_text}"
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{n_txt}</div>"
                 
-                # [수정] 테두리를 배경색과 동일하게 2px로 설정하여 블록처럼 보이게 함
-                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col}; border: 2px solid {color};' title='{p_tip}'>{i_html}</div>"
+                # [수정] 테두리 2px 진한 검은색 (#333) 적용 (Grid)
+                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col}; border: 2px solid #333;' title='{p_tip}'>{i_html}</div>"
         html += '</div>'
         return html
 
@@ -752,7 +775,7 @@ def _render_calendar_tab_unsafe():
                     duration = item['duration']
                     color = get_type_color(row['type'])
                     
-                    # [수정] 가로모드 글씨색 통일
+                    # [수정] 글씨색 화이트
                     text_col = "white"
                     
                     prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
@@ -769,14 +792,24 @@ def _render_calendar_tab_unsafe():
                         elif item['is_end']: bar_class = "bar-end"
                         else: bar_class = "bar-mid"
                     
-                    # [수정] 가로모드 테두리를 배경색과 동일하게 2px로 설정
+                    # [수정] 가로모드 테두리 2px 진한 검은색 (#333)
                     border_width = "2px"
-                    border_style = f"border-top: {border_width} solid {color}; border-bottom: {border_width} solid {color};"
-                    if bar_class == "bar-start": border_style += f"border-left: {border_width} solid {color};"
-                    elif bar_class == "bar-end": border_style += f"border-right: {border_width} solid {color};"
-                    elif bar_class == "bar-single": border_style = f"border: {border_width} solid {color};"
+                    border_color = "#333" # 진한 테두리
+                    border_style = f"border-top: {border_width} solid {border_color}; border-bottom: {border_width} solid {border_color};"
+                    if bar_class == "bar-start": border_style += f"border-left: {border_width} solid {border_color};"
+                    elif bar_class == "bar-end": border_style += f"border-right: {border_width} solid {border_color};"
+                    elif bar_class == "bar-single": border_style = f"border: {border_width} solid {border_color};"
 
-                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                    # [수정] 절대 위치를 사용한 이름 중앙 정렬 (가로모드)
+                    name_line = f"""
+                    <div style="position: relative; width: 100%; display: flex; justify-content: center; align-items: center;">
+                        <div style="position: absolute; left: 2px;">{prefix}</div>
+                        <div style="width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 14px;">
+                            {s_info}{row['name']}
+                        </div>
+                        <div style="position: absolute; right: 2px;">{suffix}</div>
+                    </div>
+                    """
                     
                     # [수정] 원근무 색상 자동 보정
                     c_am = "#87CEEB"
@@ -795,6 +828,7 @@ def _render_calendar_tab_unsafe():
                         if period_text: note_text += f" {period_text}"
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{note_text}</div>"
                     
+                    # [수정] color 적용
                     html_content += f"<div class='schedule-bar {bar_class}' style='background-color:{color}; color:{text_col}; {border_style}; position:relative;' title='{personal_tooltip}'>{violation_marker}{inner_html}</div>"
                 else: html_content += "<div class='schedule-spacer'></div>"
             html_content += '</div>'
@@ -1082,6 +1116,26 @@ def render_view_manage_tab():
     if df.empty: st.info("데이터 없음"); return
     if 'date' not in df.columns: st.error("DB 형식 오류: date 컬럼 없음"); return
     df['display_date'] = df['date']
+    
+    # [추가] 원래 근무 정보 계산
+    group_history_df = load_data("group_history")
+    history_dict = {}
+    if not group_history_df.empty and 'driver_name' in group_history_df.columns:
+        for idx, row in group_history_df.iterrows():
+            d_name = row['driver_name']
+            if d_name not in history_dict: history_dict[d_name] = []
+            history_dict[d_name].append((row['start_date'], row['group_name']))
+        for d_name in history_dict:
+            history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
+            
+    def get_orig(row):
+        grp = get_group_from_dict(history_dict, row['name'], row['date'])
+        if grp:
+            return calculate_auto_shift(grp, row['date'])
+        return ""
+    
+    df['original_shift'] = df.apply(get_orig, axis=1)
+
     with st.expander("🔎 검색", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1: sn = st.text_input("이름", key="search_name_admin")
@@ -1093,13 +1147,20 @@ def render_view_manage_tab():
     if len(sd) == 2: df = df[(df['date'] >= sd[0].strftime("%Y-%m-%d")) & (df['date'] <= sd[1].strftime("%Y-%m-%d"))]
     if stp != "전체" and 'type' in df.columns: df = df[df['type'] == stp]
     is_admin = st.session_state.get('auth_status') == 'admin'
+    
+    # 컬럼 순서 및 이름 정리
+    display_cols = ['date', 'name', 'type', 'shift', 'original_shift', 'note', 'created_at']
+    valid_cols = [c for c in display_cols if c in df.columns]
+    
+    # 보기 좋게 이름 변경 (선택사항)
+    final_df = df[valid_cols].copy()
+    final_df.columns = [c.replace('date', '날짜').replace('name', '이름').replace('type', '구분').replace('shift', '실제근무').replace('original_shift', '원래근무').replace('note', '비고').replace('created_at', '생성일') for c in final_df.columns]
+
     if is_admin:
         st.info("⚠️ 데이터 수정/삭제는 구글 시트에서 직접 하시는 것이 가장 빠르고 정확합니다.")
-        st.dataframe(df, use_container_width=True, height=800)
+        st.dataframe(final_df, use_container_width=True, height=800)
     else:
-        disp_cols = ['date', 'name', 'type', 'note']
-        valid_cols = [c for c in disp_cols if c in df.columns]
-        st.dataframe(df[valid_cols], use_container_width=True, height=1000)
+        st.dataframe(final_df, use_container_width=True, height=1000)
 
 def render_public_search_tab():
     render_view_manage_tab() 
