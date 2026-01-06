@@ -9,7 +9,7 @@ import json
 import time
 
 # ==========================================
-# 0. 로그 및 세션 초기화 (진단용)
+# 0. 로그 및 세션 (진단용)
 # ==========================================
 if 'app_logs' not in st.session_state:
     st.session_state['app_logs'] = []
@@ -19,7 +19,7 @@ def add_log(msg):
     st.session_state['app_logs'].insert(0, f"[{timestamp}] {msg}")
 
 # ==========================================
-# 1. DB 연결 및 데이터 관리 (속도 최적화)
+# 1. DB 연결 (영구 캐싱)
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -48,7 +48,6 @@ def get_db_connection():
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# [진단] 데이터 로딩 시간 측정
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
     t_start = time.perf_counter()
@@ -58,8 +57,7 @@ def load_data(sheet_name):
         data = worksheet.get_all_values()
         
         t_end = time.perf_counter()
-        # 로딩 시간 로그 기록 (최초 1회 또는 캐시 삭제 후 실행됨)
-        add_log(f"📥 '{sheet_name}' 다운로드 완료: {t_end - t_start:.2f}초")
+        add_log(f"📥 '{sheet_name}' 다운로드: {t_end - t_start:.2f}초")
         
         if not data: return pd.DataFrame()
         headers = data.pop(0)
@@ -71,7 +69,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 2. 인증 및 사용자 관리
+# 2. 인증 및 계정
 # ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
@@ -118,7 +116,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 3. 승무원 및 데이터 저장 관리
+# 3. 데이터 저장 (오류 해결 및 속도 최적화)
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -163,10 +161,9 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
-# [🚀 진단 모드] 상세 시간 측정
+# [수정됨] 4개의 값을 정확히 반환하도록 수정 (TypeError 해결)
 def save_range_batch(name_list, start, end, type, shift, note):
     t0 = time.perf_counter()
-    
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
@@ -180,8 +177,8 @@ def save_range_batch(name_list, start, end, type, shift, note):
             row_id = f"{base_id}{count:02d}"
             rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
             count += 1
-    
-    t1 = time.perf_counter()
+            
+    t1 = time.perf_counter() # 준비 완료
     
     if rows_to_add:
         sh = get_db_connection()
@@ -193,16 +190,17 @@ def save_range_batch(name_list, start, end, type, shift, note):
         
         clear_cache_after_save()
         
-        prep_time = t1 - t0
-        conn_time = t2 - t1
-        sheet_time = t3 - t2
-        upload_time = t4 - t3
+        prep = t1 - t0
+        conn = t2 - t1
+        sheet = t3 - t2
+        up = t4 - t3
         total = t4 - t0
         
-        log_msg = f"✅ 저장완료({len(rows_to_add)}건): 총 {total:.2f}초 [준비:{prep_time:.2f}s / 연결:{conn_time:.2f}s / 시트선택:{sheet_time:.2f}s / 📤업로드:{upload_time:.2f}s]"
+        log_msg = f"✅ 저장({len(rows_to_add)}건): {total:.2f}s (준비{prep:.2f}/연결{conn:.2f}/시트{sheet:.2f}/업로드{up:.2f})"
         add_log(log_msg)
+        return len(rows_to_add), prep, up, total
         
-    return len(rows_to_add)
+    return 0, 0, 0, 0 # 데이터가 없을 경우 4개 반환
 
 def add_company_event(date, title):
     sh = get_db_connection()
@@ -212,7 +210,7 @@ def add_company_event(date, title):
     clear_cache_after_save()
 
 # ==========================================
-# 4. 로직 및 계산 함수 (전역 변수 활용)
+# 4. 로직 및 계산 (최적화 적용)
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -229,14 +227,14 @@ def calculate_auto_shift(group_name, target_date_str):
         return pat[((tgt - ref).days + off) % 10]
     except: return None
 
-def get_group_by_date_memory(history_df, name, target_date_str):
-    if history_df.empty or 'driver_name' not in history_df.columns: return None
-    subset = history_df[history_df['driver_name'] == name]
-    if subset.empty: return None
-    valid_rows = subset[subset['start_date'] <= target_date_str]
-    if not valid_rows.empty:
-        valid_rows = valid_rows.sort_values(by='start_date', ascending=False)
-        return valid_rows.iloc[0]['group_name']
+# [최적화] Pandas Filtering 대신 Dictionary 사용
+def get_group_from_dict(history_dict, name, target_date_str):
+    if name not in history_dict: return None
+    records = history_dict[name]
+    # 날짜 역순으로 정렬되어 있다고 가정하고 첫 번째로 만나는 과거 날짜 반환
+    for start_date, group in records:
+        if start_date <= target_date_str:
+            return group
     return None
 
 def get_driver_group_by_name(name):
@@ -332,28 +330,6 @@ def calculate_layout_rows(df_month):
     max_row = max(lanes.keys()) + 1 if lanes else 0
     return layout_map, max_row
 
-def get_detailed_daily_stats(date_str, all_drivers, today_schedules, group_history_df):
-    total = len(all_drivers)
-    am_cnt, pm_cnt, off_cnt = 0, 0, 0
-    for _, drv in all_drivers.iterrows():
-        name = drv['name']
-        grp = get_group_by_date_memory(group_history_df, name, date_str)
-        s = calculate_auto_shift(grp, date_str)
-        if not today_schedules.empty:
-            sched = today_schedules[today_schedules['name'] == name]
-            if not sched.empty:
-                t = sched.iloc[0]['type']
-                manual_s = sched.iloc[0]['shift']
-                if t == '휴무': s = '휴무'
-                elif manual_s and manual_s != '자동': s = manual_s
-        if s == '오전': am_cnt += 1
-        elif s == '오후': pm_cnt += 1
-        elif s == '휴무': off_cnt += 1
-    
-    full_text = f"총 {total}명 (오전:{am_cnt}, 오후:{pm_cnt}, 휴무:{off_cnt})"
-    short_text = f"총 {total} / 전 {am_cnt} / 후 {pm_cnt}"
-    return full_text, short_text
-
 def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     if (p_name, p_date_str) not in full_schedule_map: return "", "", ""
     curr = datetime.strptime(p_date_str, "%Y-%m-%d")
@@ -377,7 +353,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 5. 화면 렌더링 함수 (UI) - 진단 기능 추가
+# 5. 화면 렌더링 함수
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -430,8 +406,9 @@ def show_input_dialog():
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 with st.spinner('저장 중입니다...'):
                     count, t_prep, t_up, t_tot = save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                # TypeError 해결: 값 4개를 정상적으로 받아서 처리
                 st.toast("저장 완료! 잠시 후 새로고침 됩니다.", icon="✅")
-                time.sleep(1) # 결과를 볼 시간 확보 후 새로고침
+                time.sleep(1)
                 st.rerun()
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
@@ -492,6 +469,19 @@ def render_calendar_tab():
     all_drivers = load_data("drivers")
     group_history_df = load_data("group_history")
     
+    # [최적화 1] Pandas DataFrame -> Dictionary로 변환 (검색 속도 향상)
+    history_dict = {}
+    if not group_history_df.empty and 'driver_name' in group_history_df.columns:
+        # 드라이버별로 히스토리 묶기
+        for idx, row in group_history_df.iterrows():
+            d_name = row['driver_name']
+            if d_name not in history_dict: history_dict[d_name] = []
+            history_dict[d_name].append((row['start_date'], row['group_name']))
+        # 날짜 내림차순 정렬 (최신순)
+        for d_name in history_dict:
+            history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
+            
+    # [최적화 2] 현재 월 스케줄 맵핑
     full_schedule_map = {}
     if not df_month.empty:
         for _, row in df_month.iterrows(): full_schedule_map[(row['name'], row['date'])] = row['type']
@@ -507,11 +497,14 @@ def render_calendar_tab():
         wd_str = WEEKDAY_KOREAN[wd_idx]
         
         group_shift_html = get_daily_shift_summary(date_str)
+        
+        # 오늘 스케줄 필터링
         today_schedules = pd.DataFrame()
         if not df_month.empty:
             today_schedules = df_month[df_month['date'] == date_str].copy()
             
-        full_stat, short_stat = get_detailed_daily_stats(date_str, all_drivers, today_schedules, group_history_df)
+        # [최적화된 집계 함수 호출]
+        full_stat, short_stat = get_stats_optimized(date_str, all_drivers, today_schedules, history_dict)
         
         today_events = pd.DataFrame()
         if not df_events_month.empty:
@@ -556,7 +549,7 @@ def render_calendar_tab():
             for _, row in today_schedules.iterrows():
                 color = get_type_color(row['type'])
                 prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
-                eff_grp = get_group_by_date_memory(group_history_df, row['name'], date_str)
+                eff_grp = get_group_from_dict(history_dict, row['name'], date_str)
                 orig_shift = calculate_auto_shift(eff_grp, date_str)
                 p_tip = f"원래 근무: {orig_shift if orig_shift else '없음'} ({eff_grp})"
                 s_info = ""
@@ -591,16 +584,16 @@ def render_calendar_tab():
                     violation_marker = ""
                     my_shift = row.get('shift', '자동')
                     if my_shift == '자동':
-                        grp = get_group_by_date_memory(group_history_df, row['name'], date_str)
+                        grp = get_group_from_dict(history_dict, row['name'], date_str)
                         my_shift = calculate_auto_shift(grp, date_str)
-                    prev_grp = get_group_by_date_memory(group_history_df, row['name'], prev_date_str)
+                    prev_grp = get_group_from_dict(history_dict, row['name'], prev_date_str)
                     prev_shift = calculate_auto_shift(prev_grp, prev_date_str)
                     if prev_shift == '오후' and my_shift == '오전':
                         violation_marker = "<div style='position:absolute; top:0; left:0; width:6px; height:6px; background-color:red; border-radius:50%; z-index:20;' title='⚠️ 휴식 시간 부족 (전날 오후 -> 금일 오전)'></div>"
                     duration = item['duration']
                     color = get_type_color(row['type'])
                     prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
-                    eff_grp = get_group_by_date_memory(group_history_df, row['name'], date_str)
+                    eff_grp = get_group_from_dict(history_dict, row['name'], date_str)
                     orig_shift = calculate_auto_shift(eff_grp, date_str)
                     personal_tooltip = f"원래 근무: {orig_shift if orig_shift else '없음'} ({eff_grp})"
                     s_info = ""
@@ -852,6 +845,17 @@ def render_individual_calendar_tab():
             st.rerun()
     target_year = st.session_state.indiv_view_year
     target_month = st.session_state.indiv_view_month
+    
+    # Dictionary 변환 (개별 화면도 최적화)
+    history_dict = {}
+    if not group_history_df.empty and 'driver_name' in group_history_df.columns:
+        for idx, row in group_history_df.iterrows():
+            d_name = row['driver_name']
+            if d_name not in history_dict: history_dict[d_name] = []
+            history_dict[d_name].append((row['start_date'], row['group_name']))
+        for d_name in history_dict:
+            history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
+
     if target_name:
         st.markdown(f"### 🚍 **{target_name}**"); st.divider()
         filter_ym = f"{target_year}-{target_month:02d}"
@@ -869,7 +873,7 @@ def render_individual_calendar_tab():
                     if day == 0: st.write("")
                     else:
                         d_str = f"{target_year}-{target_month:02d}-{day:02d}"
-                        eff_grp = get_group_by_date_memory(group_history_df, target_name, d_str)
+                        eff_grp = get_group_from_dict(history_dict, target_name, d_str)
                         auto = calculate_auto_shift(eff_grp, d_str)
                         d_sch = pd.DataFrame()
                         if not my_schedules.empty: d_sch = my_schedules[my_schedules['date'] == d_str]
@@ -919,6 +923,48 @@ def render_view_manage_tab():
 
 def render_public_search_tab():
     render_view_manage_tab() 
+
+# ==========================================
+# [최적화] 집계 함수 (Pandas 제거 버전)
+# ==========================================
+def get_stats_optimized(date_str, all_drivers_df, today_schedules_df, history_dict):
+    total = len(all_drivers_df)
+    am_cnt, pm_cnt, off_cnt = 0, 0, 0
+    
+    # 1. 예외 근무자 (스케줄표에 있는 사람)
+    manual_map = {}
+    if not today_schedules_df.empty:
+        for _, row in today_schedules_df.iterrows():
+            # (유형, 근무형태) 저장
+            manual_map[row['name']] = (row['type'], row.get('shift', '자동'))
+    
+    # 2. 전체 드라이버 루프 (순수 파이썬 연산)
+    drivers_list = all_drivers_df['name'].tolist() if not all_drivers_df.empty else []
+    
+    for name in drivers_list:
+        final_shift = None
+        
+        # 수동 스케줄 확인
+        if name in manual_map:
+            typ, sft = manual_map[name]
+            if typ == '휴무': final_shift = '휴무'
+            elif sft and sft != '자동': final_shift = sft
+        
+        # 자동 스케줄 계산 (수동이 없거나 '자동'일 때)
+        if not final_shift:
+            # Dictionary Lookup (O(1))
+            grp = get_group_from_dict(history_dict, name, date_str)
+            if grp:
+                final_shift = calculate_auto_shift(grp, date_str)
+        
+        # 카운팅
+        if final_shift == '오전': am_cnt += 1
+        elif final_shift == '오후': pm_cnt += 1
+        elif final_shift == '휴무': off_cnt += 1
+            
+    full_text = f"총 {total}명 (오전:{am_cnt}, 오후:{pm_cnt}, 휴무:{off_cnt})"
+    short_text = f"총 {total} / 전 {am_cnt} / 후 {pm_cnt}"
+    return full_text, short_text
 
 def main():
     st.set_page_config(page_title="우진교통 승무원 휴무 관리", layout="wide")
