@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import time
 
-# === 1. 구글 연결 객체 영구 캐싱 (속도 핵심) ===
+# === 1. [속도 최적화] 구글 연결 객체 영구 캐싱 ===
 @st.cache_resource
 def get_cached_sheet_object():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -23,7 +23,7 @@ def get_cached_sheet_object():
         
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # 파일을 여는 것까지 캐싱해서 재연결 시간을 0초로 만듦
+        # 파일을 여는 것까지 캐싱 (연결 시간 단축)
         sh = client.open("bus_schedule_db")
         return sh
     except Exception as e:
@@ -39,7 +39,7 @@ def get_db_connection():
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# === 데이터 로딩 (읽기 전용) ===
+# === 데이터 로딩 (읽기 전용, 캐시 사용) ===
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
     sh = get_db_connection()
@@ -146,16 +146,6 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
-# [수정] 다이얼로그 렉 유발 함수 제거 (필요할 때만 호출)
-def get_driver_group_by_name(name):
-    df = load_data("drivers")
-    if df.empty: return None
-    df['name'] = df['name'].astype(str)
-    row = df[df['name'] == name]
-    if not row.empty:
-        return row.iloc[0]['group_name']
-    return None
-
 # === 로직 ===
 def calculate_auto_shift(group_name, target_date_str):
     if not group_name or "조" not in group_name: return None
@@ -179,8 +169,16 @@ def get_group_by_date_memory(history_df, name, target_date_str):
         return valid_rows.iloc[0]['group_name']
     return None
 
-# === [🚀 초고속 저장 함수] ===
-# DB 읽기(Read) 과정을 없애고, 무조건 쓰기(Append)만 수행
+def get_driver_group_by_name(name):
+    df = load_data("drivers")
+    if df.empty: return None
+    df['name'] = df['name'].astype(str)
+    row = df[df['name'] == name]
+    if not row.empty:
+        return row.iloc[0]['group_name']
+    return None
+
+# === [🚀 핵심] 저장 속도 최적화 함수 (계산 X, 읽기 X, 오직 쓰기 O) ===
 def save_range_batch(name_list, start, end, type, shift, note):
     t_start = time.time()
     
@@ -188,23 +186,19 @@ def save_range_batch(name_list, start, end, type, shift, note):
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
     
-    # [속도 핵심 1] ID 생성을 위해 DB를 읽지 않음.
-    # 대신 날짜+시간(초단위) 기반의 고유 ID 생성 (예: 0106-123045)
-    # 겹칠 확률 극히 낮음.
-    base_id = now_kst.strftime("%m%d-%H%M%S")
+    # [ID 생성] 날짜+시간 숫자로 깔끔하게 생성 (예: 260106103001)
+    # 엑셀을 안 읽고 만들기 때문에 엄청 빠릅니다.
+    base_id = now_kst.strftime("%y%m%d%H%M") 
     
     rows_to_add = []
-    
-    # [속도 핵심 2] 중복 검사 제거. 
-    # 읽는 시간(3초)을 아끼기 위해 무조건 저장합니다.
-    # 관리자가 중복되지 않게 입력한다고 가정합니다.
-    
     count = 0
+    
+    # 여기서 근무 조 계산 안함! 그냥 있는 그대로 저장!
     for name in name_list:
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
-            # ID도 겹치지 않게 뒤에 순번 붙임
-            row_id = f"{base_id}-{count}"
+            # ID: 시간 + 순번 (깔끔한 숫자 형태)
+            row_id = f"{base_id}{count:02d}"
             # A:id, B:name, C:date, D:type, E:note, F:created_at, G:shift
             rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
             count += 1
@@ -212,11 +206,11 @@ def save_range_batch(name_list, start, end, type, shift, note):
     if rows_to_add:
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
-        ws.append_rows(rows_to_add) # API 호출 1회 (약 1~3초)
+        ws.append_rows(rows_to_add) # 3초 내외 소요
         clear_cache_after_save()
         
     t_end = time.time()
-    st.toast(f"🚀 {t_end - t_start:.2f}초 만에 저장 완료!", icon="⚡")
+    st.toast(f"⚡ {t_end - t_start:.2f}초 저장 완료!", icon="🚀")
     return len(rows_to_add)
 
 def add_company_event(date, title):
@@ -258,7 +252,7 @@ def is_holiday(date_obj):
 def inject_custom_css():
     st.markdown("""
     <style>
-        /* [수정] 상단 여백 3.5rem (적당히) */
+        /* 상단 여백 3.5rem (적절히 조절됨) */
         .block-container { 
             padding-top: 3.5rem !important; 
             padding-bottom: 1rem !important; 
@@ -282,7 +276,7 @@ def inject_custom_css():
         
         .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
         
-        /* [수정] 오전/오후 텍스트 볼드체 */
+        /* 오전/오후 조 표시 글자 진하게 */
         .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
         
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
@@ -388,7 +382,6 @@ def show_input_dialog():
         st.write("달력을 보면서 바로 입력하세요.")
         names_str = st.text_area("이름 (엔터 구분)", height=100, key="quick_names")
         rng = st.date_input("기간", [], help="시작/종료일 선택", key="quick_range")
-        # [수정] 팝업 렉의 주범이었던 실시간 검사 로직 제거 (여기서 DB 안 읽음)
         if names_str and len(rng) > 0:
             st.caption(f"{len(names_str.split())}명 선택됨")
             
@@ -745,6 +738,74 @@ def render_driver_manage_tab():
                         if st.button("삭제", key=f"del_user_{row['username']}"):
                             delete_user_account(row['username'])
                             st.success("삭제됨"); st.rerun()
+
+def render_individual_calendar_tab():
+    st.subheader("👤 승무원별 월간 근무 현황")
+    inject_custom_css()
+    drivers = load_data("drivers")
+    if drivers.empty: st.warning("승무원을 먼저 등록하세요."); return
+    now = get_kst_now()
+    if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
+    if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
+    c_sel, c_prev, c_date, c_next = st.columns([1.5, 0.5, 1, 0.5])
+    with c_sel: target_name = st.selectbox("승무원 선택", drivers['name'].tolist())
+    with c_prev:
+        if st.button("◀", key="ind_prev", use_container_width=True):
+            if st.session_state.indiv_view_month == 1:
+                st.session_state.indiv_view_year -= 1; st.session_state.indiv_view_month = 12
+            else: st.session_state.indiv_view_month -= 1
+            st.rerun()
+    with c_date: st.markdown(f"<h3 style='text-align:center; margin:0; padding-top:5px;'>{st.session_state.indiv_view_year}년 {st.session_state.indiv_view_month}월</h3>", unsafe_allow_html=True)
+    with c_next:
+        if st.button("▶", key="ind_next", use_container_width=True):
+            if st.session_state.indiv_view_month == 12:
+                st.session_state.indiv_view_year += 1; st.session_state.indiv_view_month = 1
+            else: st.session_state.indiv_view_month += 1
+            st.rerun()
+    target_year = st.session_state.indiv_view_year
+    target_month = st.session_state.indiv_view_month
+    
+    df = load_data("schedules")
+    group_history_df = load_data("group_history")
+    
+    if target_name:
+        st.markdown(f"### 🚍 **{target_name}**"); st.divider()
+        filter_ym = f"{target_year}-{target_month:02d}"
+        my_schedules = pd.DataFrame()
+        if not df.empty:
+            my_schedules = df[(df['name'] == target_name) & (df['date'].astype(str).str.startswith(filter_ym))]
+        cal = calendar.monthcalendar(target_year, target_month)
+        cols = st.columns(7)
+        for i, w in enumerate(["월", "화", "수", "목", "금", "토", "일"]): cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{w}</div>", unsafe_allow_html=True)
+        
+        for week in cal:
+            cols = st.columns(7)
+            for i, day in enumerate(week):
+                with cols[i]:
+                    if day == 0: st.write("")
+                    else:
+                        d_str = f"{target_year}-{target_month:02d}-{day:02d}"
+                        eff_grp = get_group_by_date_memory(group_history_df, target_name, d_str)
+                        auto = calculate_auto_shift(eff_grp, d_str)
+                        d_sch = my_schedules[my_schedules['date'] == d_str] if not my_schedules.empty else pd.DataFrame()
+                        cell_bg = "transparent"
+                        text_color = "black"
+                        sub_text = ""
+                        if not d_sch.empty:
+                            r = d_sch.iloc[0]
+                            t = r['type']
+                            if t == "휴무": cell_bg = "#ffc9c9"; text_color = "#c92a2a"; sub_text = "휴무"
+                            elif t in ["교육", "경조사", "병가", "휴직"]: cell_bg = "#ffe8cc"; text_color = "#d9480f"; sub_text = t
+                            else: cell_bg = "#f1f3f5"; sub_text = t
+                        elif auto:
+                            if auto == "오전": cell_bg = "#e7f5ff"; text_color = "#1864ab"; sub_text = f"오전 ({eff_grp})"
+                            elif auto == "오후": cell_bg = "#fff4e6"; text_color = "#e67700"; sub_text = f"오후 ({eff_grp})"
+                            elif auto == "휴무": cell_bg = "#f8f9fa"; text_color = "#868e96"; sub_text = f"휴무 ({eff_grp})"
+                        st.markdown(f"""
+                        <div style='background-color:{cell_bg}; border:1px solid #dee2e6; border-radius:5px; padding:5px; min-height:80px; display:flex; flex-direction:column; justify-content:space-between; height:100%;'>
+                            <div style='font-weight:bold; font-size:14px; color:#333;'>{day}</div>
+                            <div style='text-align:center; font-weight:bold; font-size:13px; color:{text_color}; margin-top:5px;'>{sub_text}</div>
+                        </div>""", unsafe_allow_html=True)
 
 def render_view_manage_tab():
     st.subheader("📊 조회 및 관리")
