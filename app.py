@@ -8,6 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import time
 import traceback
+import holidays # [추가] 한국 휴일 자동 계산 라이브러리
 
 # ==========================================
 # 0. 로그 및 초기화
@@ -227,7 +228,7 @@ def add_company_event(date, title):
     return row_id
 
 # ==========================================
-# 5. 로직 및 계산
+# 5. 로직 및 계산 (휴일 자동화 적용)
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -274,17 +275,13 @@ def get_off_groups(date_str):
     cycle = (target - ref).days % 5
     return [("1,6조", ["1조", "6조"]), ("2,7조", ["2조", "7조"]), ("3,8조", ["3조", "8조"]), ("4,9조", ["4조", "9조"]), ("5,10조", ["5조", "10조"])][cycle]
 
+# [수정] holidays 라이브러리로 자동화 (수기 입력 제거)
+# KR: 대한민국 공휴일 (설날, 추석, 대체공휴일 포함)
+kr_holidays = holidays.KR()
+
 def is_holiday(date_obj):
-    holidays = [
-        "2024-01-01", "2024-02-09", "2024-02-10", "2024-02-11", "2024-02-12",
-        "2024-03-01", "2024-04-10", "2024-05-05", "2024-05-06", "2024-05-15",
-        "2024-06-06", "2024-08-15", "2024-09-16", "2024-09-17", "2024-09-18",
-        "2024-10-03", "2024-10-09", "2024-12-25",
-        "2025-01-01", "2025-01-28", "2025-01-29", "2025-01-30", "2025-03-01",
-        "2025-05-05", "2025-05-06", "2025-06-06", "2025-08-15", "2025-10-03",
-        "2025-10-06", "2025-10-09", "2025-12-25"
-    ]
-    return date_obj.strftime("%Y-%m-%d") in holidays
+    # holidays 라이브러리에서 해당 날짜가 휴일인지 확인
+    return date_obj in kr_holidays
 
 def get_daily_shift_summary(date_str):
     am, pm, off = [], [], []
@@ -293,9 +290,12 @@ def get_daily_shift_summary(date_str):
         if s == "오전": am.append(str(i))
         elif s == "오후": pm.append(str(i))
         else: off.append(str(i))
+        
     am_str = f"<span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span>" if am else ""
     pm_str = f"<span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span>" if pm else ""
-    return f"{am_str}<br>{pm_str}"
+    off_str = f"<span style='color:#868e96; font-weight:bold; font-size:0.9em; margin-left:8px;'>휴무: {','.join(off)}</span>" if off else ""
+    
+    return f"{am_str}{off_str}<br>{pm_str}"
 
 @st.cache_data(ttl=600)
 def calculate_layout_rows(df_month):
@@ -346,7 +346,6 @@ def calculate_layout_rows(df_month):
     return layout_map, max_row
 
 def get_stats_optimized(date_str, all_drivers_df, today_schedules_df, history_dict):
-    # [수정] 퇴사일 확인하여 해당 날짜에 근무하는 실제 인원만 추림
     active_drivers_list = []
     
     if not all_drivers_df.empty:
@@ -355,7 +354,6 @@ def get_stats_optimized(date_str, all_drivers_df, today_schedules_df, history_di
             is_active = True
             if has_resign_col:
                 r_date = str(dr['resigned_date']).strip()
-                # 퇴사일이 존재하고, 조회하려는 날짜가 퇴사일보다 미래라면 제외
                 if r_date and date_str > r_date:
                     is_active = False
             if is_active:
@@ -550,6 +548,7 @@ def render_log_tab():
     else:
         st.caption("아직 기록된 로그가 없습니다.")
 
+# [중요] 렌더링 에러 방지용 Wrapper 함수
 def render_calendar_tab():
     if st.session_state.get('last_error_msg'):
         st.error("🚨 방금 전 저장 중 오류가 발생했습니다!")
