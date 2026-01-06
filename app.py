@@ -113,7 +113,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 3. 데이터 저장 (ID 생성 로직 통일)
+# 3. 데이터 저장
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -170,6 +170,7 @@ def save_range_batch(name_list, start, end, type, shift, note):
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
             row_id = f"{base_id}{count:02d}"
+            # [수정] ID, Name, Date, Type, Note, CreatedAt, Shift
             rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
             count += 1
             
@@ -181,15 +182,13 @@ def save_range_batch(name_list, start, end, type, shift, note):
         
     return len(rows_to_add)
 
-# [수정] 회사 행사에도 ID 부여 (버그 해결)
 def add_company_event(date, title):
     sh = get_db_connection()
     ws = sh.worksheet("company_events")
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d")
-    # ID 생성: 시간 + 랜덤한 느낌의 초단위 숫자
-    row_id = now_kst.strftime("%y%m%d%H%M%S") 
-    
+    # ID 생성
+    row_id = now_kst.strftime("%y%m%d%H%M%S")
     ws.append_row([row_id, date, title, created_at])
     clear_cache_after_save()
 
@@ -371,7 +370,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 5. 화면 렌더링 (팝업 및 에러 고정)
+# 5. 화면 렌더링 (팝업 고정 및 에러 유지)
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -419,22 +418,25 @@ def show_input_dialog():
         with c1: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
+        
+        # [중요] 저장 버튼 누르면 st.rerun()을 하지 않습니다.
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 try:
                     with st.spinner('저장 중입니다...'):
                         save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                    st.toast("저장 완료!", icon="✅")
+                    
+                    st.success("✅ 저장 완료! (창을 닫으면 새로고침됩니다)")
                     add_log(f"입력 성공: {len(lst)}명, {rng[0]}~{rng[-1]}, {typ}")
-                    time.sleep(1)
-                    st.rerun()
+                    # 여기서 st.rerun()을 제거함 -> 화면이 멈춰있음
+                    
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     add_log(error_msg, "ERROR")
-                    st.error("🚨 저장 중 오류 발생! (화면 고정됨)")
-                    st.text_area("에러 상세", error_msg, height=200)
-                    st.stop() # [중요] 여기서 멈춰서 팝업창 유지
+                    st.error("🚨 저장 중 오류 발생!")
+                    st.text_area("에러 상세 (복사 가능)", error_msg, height=200)
+                    st.stop() # 더 이상 진행하지 않고 멈춤
             else:
                 st.warning("이름과 기간을 입력해주세요.")
 
@@ -449,13 +451,14 @@ def show_input_dialog():
                         s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
                         for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
                         st.cache_data.clear()
-                    st.success("행사가 저장되었습니다!"); st.rerun()
+                    st.success("✅ 행사가 저장되었습니다! (창을 닫으세요)")
+                    # st.rerun() 제거
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     add_log(f"행사 저장 실패: {str(e)}", "ERROR")
-                    st.error("오류 발생 (화면 고정됨)")
+                    st.error("오류 발생")
                     st.text_area("에러 상세", error_msg, height=200)
-                    st.stop() # 멈춤
+                    st.stop()
             else: st.warning("기간과 내용을 모두 입력해주세요.")
 
 def render_log_tab():
@@ -508,14 +511,12 @@ def _render_calendar_tab_unsafe():
     
     df = load_data("schedules")
     
-    # [수정] 렌더링은 해당 월만 필터링 (화면 그리기 용)
     if not df.empty:
         filter_keyword = f"{selected_year}-{selected_month:02d}"
         df_month = df[df['date'].astype(str).str.startswith(filter_keyword)]
     else:
         df_month = pd.DataFrame(columns=['id', 'name', 'date', 'type', 'shift', 'note', 'created_at'])
 
-    # [수정] 휴무 연속성 계산은 전체 데이터(df)로 맵핑 (월 넘어가도 계산되게)
     full_schedule_map = {}
     if not df.empty:
         for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
