@@ -187,7 +187,6 @@ def save_range_batch(name_list, start, end, type, shift, note):
     created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
     
     # [ID 생성] 날짜+시간 숫자로 깔끔하게 생성 (예: 260106103001)
-    # 엑셀을 안 읽고 만들기 때문에 엄청 빠릅니다.
     base_id = now_kst.strftime("%y%m%d%H%M") 
     
     rows_to_add = []
@@ -630,6 +629,49 @@ def render_calendar_tab():
                     if day == 0: st.markdown("<div class='calendar-day-box' style='background-color:#f8f9fa; min-height:200px;'></div>", unsafe_allow_html=True)
                     else: st.markdown(get_day_html(day, is_horiz=False), unsafe_allow_html=True)
 
+# [복구된 함수] 관리자 입력 탭
+def render_input_tab():
+    st.subheader("📝 관리자 입력")
+    t1, t2 = st.tabs(["휴무 등록", "행사 등록"])
+    with t1:
+        c1, c2 = st.columns([2, 1])
+        with c1: names_str = st.text_area("이름 (엔터 구분)", height=68)
+        with c2: rng = st.date_input("기간", [], help="시작/종료일 선택")
+        if names_str and len(rng) > 0:
+            # 팝업 렉 없애기 위해 여기서 계산 안함
+            st.caption(f"{len(names_str.split())}명 선택됨")
+            
+        c3, c4 = st.columns(2)
+        with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"])
+        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"])
+        nte = st.text_input("비고")
+        st.markdown('<div class="red-button">', unsafe_allow_html=True)
+        if st.button("일괄 저장", type="primary", use_container_width=True):
+            if names_str and len(rng) > 0:
+                lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
+                with st.spinner('저장 중입니다...'):
+                    save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                st.success("저장 완료"); st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+    with t2:
+        c_e1, c_e2 = st.columns([2, 1])
+        with c_e1:
+            ed_list = st.date_input("행사 기간", [], help="시작/종료일")
+            et = st.text_input("내용")
+            if st.button("행사 저장", type="secondary"):
+                if et and len(ed_list) > 0:
+                    with st.spinner('저장 중입니다...'):
+                        s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
+                        for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
+                        st.cache_data.clear() 
+                    st.success("저장됨"); st.rerun()
+        st.divider()
+        st.write("🗑️ **등록된 행사 목록**")
+        events_df = load_data("company_events")
+        if not events_df.empty:
+            st.dataframe(events_df, use_container_width=True)
+        else: st.info("등록된 행사가 없습니다.")
+
 def render_driver_manage_tab():
     st.subheader("⚙️ 승무원 및 조(Group) 관리")
     tab_bulk, tab_change, tab_resign, tab_users = st.tabs(["➕ 승무원 등록", "🔄 조 변경", "👋 퇴사 처리", "🔐 관리자 계정"])
@@ -738,74 +780,6 @@ def render_driver_manage_tab():
                         if st.button("삭제", key=f"del_user_{row['username']}"):
                             delete_user_account(row['username'])
                             st.success("삭제됨"); st.rerun()
-
-def render_individual_calendar_tab():
-    st.subheader("👤 승무원별 월간 근무 현황")
-    inject_custom_css()
-    drivers = load_data("drivers")
-    if drivers.empty: st.warning("승무원을 먼저 등록하세요."); return
-    now = get_kst_now()
-    if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
-    if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
-    c_sel, c_prev, c_date, c_next = st.columns([1.5, 0.5, 1, 0.5])
-    with c_sel: target_name = st.selectbox("승무원 선택", drivers['name'].tolist())
-    with c_prev:
-        if st.button("◀", key="ind_prev", use_container_width=True):
-            if st.session_state.indiv_view_month == 1:
-                st.session_state.indiv_view_year -= 1; st.session_state.indiv_view_month = 12
-            else: st.session_state.indiv_view_month -= 1
-            st.rerun()
-    with c_date: st.markdown(f"<h3 style='text-align:center; margin:0; padding-top:5px;'>{st.session_state.indiv_view_year}년 {st.session_state.indiv_view_month}월</h3>", unsafe_allow_html=True)
-    with c_next:
-        if st.button("▶", key="ind_next", use_container_width=True):
-            if st.session_state.indiv_view_month == 12:
-                st.session_state.indiv_view_year += 1; st.session_state.indiv_view_month = 1
-            else: st.session_state.indiv_view_month += 1
-            st.rerun()
-    target_year = st.session_state.indiv_view_year
-    target_month = st.session_state.indiv_view_month
-    
-    df = load_data("schedules")
-    group_history_df = load_data("group_history")
-    
-    if target_name:
-        st.markdown(f"### 🚍 **{target_name}**"); st.divider()
-        filter_ym = f"{target_year}-{target_month:02d}"
-        my_schedules = pd.DataFrame()
-        if not df.empty:
-            my_schedules = df[(df['name'] == target_name) & (df['date'].astype(str).str.startswith(filter_ym))]
-        cal = calendar.monthcalendar(target_year, target_month)
-        cols = st.columns(7)
-        for i, w in enumerate(["월", "화", "수", "목", "금", "토", "일"]): cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{w}</div>", unsafe_allow_html=True)
-        
-        for week in cal:
-            cols = st.columns(7)
-            for i, day in enumerate(week):
-                with cols[i]:
-                    if day == 0: st.write("")
-                    else:
-                        d_str = f"{target_year}-{target_month:02d}-{day:02d}"
-                        eff_grp = get_group_by_date_memory(group_history_df, target_name, d_str)
-                        auto = calculate_auto_shift(eff_grp, d_str)
-                        d_sch = my_schedules[my_schedules['date'] == d_str] if not my_schedules.empty else pd.DataFrame()
-                        cell_bg = "transparent"
-                        text_color = "black"
-                        sub_text = ""
-                        if not d_sch.empty:
-                            r = d_sch.iloc[0]
-                            t = r['type']
-                            if t == "휴무": cell_bg = "#ffc9c9"; text_color = "#c92a2a"; sub_text = "휴무"
-                            elif t in ["교육", "경조사", "병가", "휴직"]: cell_bg = "#ffe8cc"; text_color = "#d9480f"; sub_text = t
-                            else: cell_bg = "#f1f3f5"; sub_text = t
-                        elif auto:
-                            if auto == "오전": cell_bg = "#e7f5ff"; text_color = "#1864ab"; sub_text = f"오전 ({eff_grp})"
-                            elif auto == "오후": cell_bg = "#fff4e6"; text_color = "#e67700"; sub_text = f"오후 ({eff_grp})"
-                            elif auto == "휴무": cell_bg = "#f8f9fa"; text_color = "#868e96"; sub_text = f"휴무 ({eff_grp})"
-                        st.markdown(f"""
-                        <div style='background-color:{cell_bg}; border:1px solid #dee2e6; border-radius:5px; padding:5px; min-height:80px; display:flex; flex-direction:column; justify-content:space-between; height:100%;'>
-                            <div style='font-weight:bold; font-size:14px; color:#333;'>{day}</div>
-                            <div style='text-align:center; font-weight:bold; font-size:13px; color:{text_color}; margin-top:5px;'>{sub_text}</div>
-                        </div>""", unsafe_allow_html=True)
 
 def render_view_manage_tab():
     st.subheader("📊 조회 및 관리")
