@@ -262,21 +262,20 @@ def get_driver_group_by_name(name):
         return row.iloc[0]['group_name']
     return None
 
-# [수정] 파스텔 톤 색상표 적용
+# [수정] 스타벅스 & 프로페셔널 딥 컬러 테마
 def get_type_color(type_name):
     colors = { 
-        "휴무": "#b2f2bb",      # 연한 초록 (눈 편안함)
-        "육아휴직": "#ffe066",  # 연한 노랑/오렌지
-        "휴직": "#ffe066",
-        "경조사": "#d0bfff",    # 연한 보라
-        "병가": "#ffc9c9",      # 연한 빨강
-        "당일 해지": "#ffa8a8", # 조금 진한 연한 빨강
-        "교육": "#ffec99",      # 연한 오렌지
-        "징계": "#343a40",      # 진한 회색 (경고 느낌, 글씨 흰색 예정)
-        "기타": "#e9ecef"       # 연한 회색
+        "휴무": "#00592D",      # 스타벅스 그린
+        "교육": "#C6A87C",      # 라떼/골드 계열
+        "경조사": "#1F3994",    # 딥 네이비/로얄 블루
+        "징계": "#363636",      # 차콜 그레이 (블랙보다 부드러움)
+        "당일 해지": "#8B0000", # 다크 레드
+        "병가": "#A52A2A",      # 브라운 레드
+        "휴직": "#D2691E",      # 초콜릿
+        "육아휴직": "#D2691E", 
+        "기타": "#595959"       # 딤 그레이
     }
-    # 기본값은 아주 연한 하늘색
-    return colors.get(type_name, "#a5d8ff")
+    return colors.get(type_name, "#546E7A") # 기본값: 블루그레이
 
 def get_off_groups(date_str):
     ref = datetime(2025, 12, 1)
@@ -450,7 +449,7 @@ def inject_custom_css():
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
         .event-container::-webkit-scrollbar { display: none; }
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
-        .schedule-bar { color: black; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1); }
+        .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1); }
         .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
         .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
         .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
@@ -690,8 +689,8 @@ def _render_calendar_tab_unsafe():
             for _, row in today_schedules.iterrows():
                 color = get_type_color(row['type'])
                 
-                # [수정] 징계, 기타, 경조사는 흰색 글씨, 나머지는 검정
-                text_col = "white" if row['type'] in ["징계", "기타", "경조사"] else "black"
+                # [수정] 글씨색은 모두 흰색(White)로 통일 (진한 배경)
+                text_col = "white"
                 
                 prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
                 eff_grp = get_group_from_dict(history_dict, row['name'], date_str)
@@ -702,11 +701,11 @@ def _render_calendar_tab_unsafe():
                 if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_st:
                     s_info = f"[{row['shift']}] "
                 
-                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                 
-                # [수정] 원근무 표시 (전)/(후) 색상 적용
-                c_am = "#A5D8FF" if text_col == "white" else "#1864ab" # 진한 파랑(검정글씨용)
-                c_pm = "#FFC9C9" if text_col == "white" else "#d9480f" # 진한 빨강(검정글씨용)
+                # [수정] 원근무 표시 색상 (어두운 배경 위에서 잘 보이도록 형광/파스텔톤 사용)
+                c_am = "#87CEEB" # 형광 하늘색 (SkyBlue)
+                c_pm = "#FFB6C1" # 형광 분홍색 (LightPink)
                 
                 orig_info = ""
                 if orig_shift == "오전": orig_info = f"<span style='color:{c_am}; font-weight:bold;'>(전)</span> "
@@ -721,8 +720,8 @@ def _render_calendar_tab_unsafe():
                     if period_text: n_txt += f" {period_text}"
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{n_txt}</div>"
                 
-                # [수정] 모든 바에 얇은 테두리 적용 + color 적용
-                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col}; border: 1px solid rgba(0,0,0,0.1);' title='{p_tip}'>{i_html}</div>"
+                # [수정] 테두리 진하게 (#333) 변경
+                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col}; border: 1px solid #333;' title='{p_tip}'>{i_html}</div>"
         html += '</div>'
         return html
 
@@ -751,8 +750,8 @@ def _render_calendar_tab_unsafe():
                     duration = item['duration']
                     color = get_type_color(row['type'])
                     
-                    # [수정] 텍스트 색상 결정 (가로모드)
-                    text_col = "white" if row['type'] in ["징계", "기타", "경조사"] else "black"
+                    # [수정] 가로모드 글씨색 통일
+                    text_col = "white"
                     
                     prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
                     eff_grp = get_group_from_dict(history_dict, row['name'], date_str)
@@ -768,17 +767,17 @@ def _render_calendar_tab_unsafe():
                         elif item['is_end']: bar_class = "bar-end"
                         else: bar_class = "bar-mid"
                     
-                    # [수정] 모든 바에 테두리 적용 (연결 부위 제외)
-                    border_style = "border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1);"
-                    if bar_class == "bar-start": border_style += "border-left: 1px solid rgba(0,0,0,0.1);"
-                    elif bar_class == "bar-end": border_style += "border-right: 1px solid rgba(0,0,0,0.1);"
-                    elif bar_class == "bar-single": border_style = "border: 1px solid rgba(0,0,0,0.1);"
+                    # [수정] 가로모드 테두리 진하게
+                    border_style = "border-top: 1px solid #333; border-bottom: 1px solid #333;"
+                    if bar_class == "bar-start": border_style += "border-left: 1px solid #333;"
+                    elif bar_class == "bar-end": border_style += "border-right: 1px solid #333;"
+                    elif bar_class == "bar-single": border_style = "border: 1px solid #333;"
 
                     name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                     
                     # [수정] 원근무 색상 자동 보정
-                    c_am = "#A5D8FF" if text_col == "white" else "#1864ab"
-                    c_pm = "#FFC9C9" if text_col == "white" else "#d9480f"
+                    c_am = "#87CEEB"
+                    c_pm = "#FFB6C1"
                     
                     orig_info = ""
                     if orig_shift == "오전": orig_info = f"<span style='color:{c_am}; font-weight:bold;'>(전)</span> "
@@ -793,7 +792,6 @@ def _render_calendar_tab_unsafe():
                         if period_text: note_text += f" {period_text}"
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{note_text}</div>"
                     
-                    # [수정] color 적용
                     html_content += f"<div class='schedule-bar {bar_class}' style='background-color:{color}; color:{text_col}; {border_style}; position:relative;' title='{personal_tooltip}'>{violation_marker}{inner_html}</div>"
                 else: html_content += "<div class='schedule-spacer'></div>"
             html_content += '</div>'
@@ -1081,26 +1079,6 @@ def render_view_manage_tab():
     if df.empty: st.info("데이터 없음"); return
     if 'date' not in df.columns: st.error("DB 형식 오류: date 컬럼 없음"); return
     df['display_date'] = df['date']
-    
-    # [추가] 원래 근무 정보 계산
-    group_history_df = load_data("group_history")
-    history_dict = {}
-    if not group_history_df.empty and 'driver_name' in group_history_df.columns:
-        for idx, row in group_history_df.iterrows():
-            d_name = row['driver_name']
-            if d_name not in history_dict: history_dict[d_name] = []
-            history_dict[d_name].append((row['start_date'], row['group_name']))
-        for d_name in history_dict:
-            history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
-            
-    def get_orig(row):
-        grp = get_group_from_dict(history_dict, row['name'], row['date'])
-        if grp:
-            return calculate_auto_shift(grp, row['date'])
-        return ""
-    
-    df['original_shift'] = df.apply(get_orig, axis=1)
-
     with st.expander("🔎 검색", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1: sn = st.text_input("이름", key="search_name_admin")
@@ -1112,20 +1090,13 @@ def render_view_manage_tab():
     if len(sd) == 2: df = df[(df['date'] >= sd[0].strftime("%Y-%m-%d")) & (df['date'] <= sd[1].strftime("%Y-%m-%d"))]
     if stp != "전체" and 'type' in df.columns: df = df[df['type'] == stp]
     is_admin = st.session_state.get('auth_status') == 'admin'
-    
-    # 컬럼 순서 및 이름 정리
-    display_cols = ['date', 'name', 'type', 'shift', 'original_shift', 'note', 'created_at']
-    valid_cols = [c for c in display_cols if c in df.columns]
-    
-    # 보기 좋게 이름 변경 (선택사항)
-    final_df = df[valid_cols].copy()
-    final_df.columns = [c.replace('date', '날짜').replace('name', '이름').replace('type', '구분').replace('shift', '실제근무').replace('original_shift', '원래근무').replace('note', '비고').replace('created_at', '생성일') for c in final_df.columns]
-
     if is_admin:
         st.info("⚠️ 데이터 수정/삭제는 구글 시트에서 직접 하시는 것이 가장 빠르고 정확합니다.")
-        st.dataframe(final_df, use_container_width=True, height=800)
+        st.dataframe(df, use_container_width=True, height=800)
     else:
-        st.dataframe(final_df, use_container_width=True, height=1000)
+        disp_cols = ['date', 'name', 'type', 'note']
+        valid_cols = [c for c in disp_cols if c in df.columns]
+        st.dataframe(df[valid_cols], use_container_width=True, height=1000)
 
 def render_public_search_tab():
     render_view_manage_tab() 
