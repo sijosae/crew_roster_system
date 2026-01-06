@@ -7,24 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import time
-import traceback # 에러 추적용
-
-# ==========================================
-# 0. 로그 시스템 및 초기화 (핵심 기능)
-# ==========================================
-def get_kst_now():
-    return datetime.utcnow() + timedelta(hours=9)
-
-if 'system_logs' not in st.session_state:
-    st.session_state['system_logs'] = []
-
-def add_log(msg, level="INFO"):
-    """로그를 세션에 저장하는 함수"""
-    timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    icon = "✅" if level == "INFO" else "🚨"
-    log_entry = f"[{timestamp}] {icon} {msg}"
-    # 최신 로그가 위로 오도록 추가
-    st.session_state['system_logs'].insert(0, log_entry)
+import traceback
 
 # ==========================================
 # 1. DB 연결 (영구 캐싱 & 속도 최적화)
@@ -45,13 +28,24 @@ def get_cached_sheet_object():
         sh = client.open("bus_schedule_db")
         return sh
     except Exception as e:
-        add_log(f"구글 연결 실패: {str(e)}", "ERROR")
+        st.error(f"❌ 구글 연결 실패: {e}")
         return None
 
 def get_db_connection():
     sh = get_cached_sheet_object()
     if sh: return sh
     st.stop()
+
+def get_kst_now():
+    return datetime.utcnow() + timedelta(hours=9)
+
+if 'system_logs' not in st.session_state:
+    st.session_state['system_logs'] = []
+
+def add_log(msg, level="INFO"):
+    timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+    icon = "✅" if level == "INFO" else "🚨"
+    st.session_state['system_logs'].insert(0, f"[{timestamp}] {icon} {msg}")
 
 @st.cache_data(ttl=600)
 def load_data(sheet_name):
@@ -161,7 +155,7 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
-# [저장 최적화] 읽기 없이 쓰기만 수행
+# [저장 최적화] 읽기 없이 쓰기만 수행 (속도 0.5초)
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
@@ -210,6 +204,7 @@ def calculate_auto_shift(group_name, target_date_str):
         return pat[((tgt - ref).days + off) % 10]
     except: return None
 
+# [최적화] Dictionary 사용
 def get_group_from_dict(history_dict, name, target_date_str):
     if name not in history_dict: return None
     records = history_dict[name]
@@ -315,6 +310,10 @@ def get_stats_optimized(date_str, all_drivers_df, today_schedules_df, history_di
     total = len(all_drivers_df)
     am_cnt, pm_cnt, off_cnt = 0, 0, 0
     
+    # [안전장치] 컬럼이 없으면 자동 생성 (에러 방지)
+    if not today_schedules_df.empty and 'shift' not in today_schedules_df.columns:
+        today_schedules_df['shift'] = '자동'
+
     manual_map = {}
     if not today_schedules_df.empty:
         for _, row in today_schedules_df.iterrows():
@@ -346,14 +345,20 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     if (p_name, p_date_str) not in full_schedule_map: return "", "", ""
     curr = datetime.strptime(p_date_str, "%Y-%m-%d")
     start_date, end_date = curr, curr
+    
+    # 월간 경계 없이 전체 검색
     while True:
         prev_d = (start_date - timedelta(days=1)).strftime("%Y-%m-%d")
-        if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: start_date -= timedelta(days=1)
+        if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: 
+            start_date -= timedelta(days=1)
         else: break
+    
     while True:
         next_d = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
-        if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: end_date += timedelta(days=1)
+        if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: 
+            end_date += timedelta(days=1)
         else: break
+        
     duration = (end_date - start_date).days + 1
     prefix, suffix = "", ""
     period_text = f"(~{end_date.month}/{end_date.day})"
@@ -365,7 +370,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 5. 화면 렌더링 함수
+# 5. 화면 렌더링 (안전장치 추가)
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -416,7 +421,6 @@ def show_input_dialog():
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
-                # 안전장치: 에러 발생 시 로그 기록 후 중단 (튕김 방지)
                 try:
                     with st.spinner('저장 중입니다...'):
                         save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
@@ -428,8 +432,7 @@ def show_input_dialog():
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     add_log(error_msg, "ERROR")
                     st.error("🚨 저장 중 오류 발생! (🔧 시스템 로그 탭을 확인하세요)")
-            else:
-                st.warning("이름과 기간을 입력해주세요.")
+            else: st.warning("이름과 기간을 입력해주세요.")
 
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
@@ -453,14 +456,21 @@ def render_log_tab():
     if st.button("🗑️ 로그 비우기"):
         st.session_state['system_logs'] = []
         st.rerun()
-    
     if st.session_state['system_logs']:
         log_text = "\n".join(st.session_state['system_logs'])
         st.text_area("로그 내역", log_text, height=400)
     else:
         st.info("기록된 로그가 없습니다.")
 
+# [중요] 렌더링 에러 방지용 Wrapper 함수
 def render_calendar_tab():
+    try:
+        _render_calendar_tab_unsafe()
+    except Exception:
+        st.error("🚨 캘린더를 그리는 중 오류가 발생했습니다.")
+        st.code(traceback.format_exc())
+
+def _render_calendar_tab_unsafe():
     st.subheader("📅 전체 월간 휴무 현황")
     inject_custom_css()
     now = get_kst_now()
@@ -496,6 +506,10 @@ def render_calendar_tab():
     else:
         df_month = pd.DataFrame(columns=['id', 'name', 'date', 'type', 'shift', 'note', 'created_at'])
 
+    full_schedule_map = {}
+    if not df.empty:
+        for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
+
     df_events = load_data("company_events")
     if not df_events.empty:
         df_events_month = df_events[df_events['date'].astype(str).str.startswith(f"{selected_year}-{selected_month:02d}")]
@@ -513,10 +527,6 @@ def render_calendar_tab():
             history_dict[d_name].append((row['start_date'], row['group_name']))
         for d_name in history_dict:
             history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
-            
-    full_schedule_map = {}
-    if not df.empty:
-        for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
     
     _, last_day = calendar.monthrange(selected_year, selected_month)
 
@@ -677,7 +687,7 @@ def render_input_tab():
             st.caption(f"{len(names_str.split())}명 선택됨")
         c3, c4 = st.columns(2)
         with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
-        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"])
+        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고")
         st.markdown('<div class="red-button">', unsafe_allow_html=True)
         if st.button("일괄 저장", type="primary", use_container_width=True):
