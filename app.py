@@ -8,7 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import time
 import traceback
-import holidays # [추가] 한국 휴일 자동 계산 라이브러리
+import holidays
 
 # ==========================================
 # 0. 로그 및 초기화
@@ -228,7 +228,7 @@ def add_company_event(date, title):
     return row_id
 
 # ==========================================
-# 5. 로직 및 계산 (휴일 자동화 적용)
+# 5. 로직 및 계산
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -275,27 +275,53 @@ def get_off_groups(date_str):
     cycle = (target - ref).days % 5
     return [("1,6조", ["1조", "6조"]), ("2,7조", ["2조", "7조"]), ("3,8조", ["3조", "8조"]), ("4,9조", ["4조", "9조"]), ("5,10조", ["5조", "10조"])][cycle]
 
-# [수정] holidays 라이브러리로 자동화 (수기 입력 제거)
-# KR: 대한민국 공휴일 (설날, 추석, 대체공휴일 포함)
 kr_holidays = holidays.KR()
 
 def is_holiday(date_obj):
-    # holidays 라이브러리에서 해당 날짜가 휴일인지 확인
     return date_obj in kr_holidays
 
+# [수정] 좌우 배분 (Flexbox) 및 휴무조 분리 (전날 오전근무자 / 전날 오후근무자)
 def get_daily_shift_summary(date_str):
-    am, pm, off = [], [], []
-    for i in range(1, 11):
-        s = calculate_auto_shift(f"{i}조", date_str)
-        if s == "오전": am.append(str(i))
-        elif s == "오후": pm.append(str(i))
-        else: off.append(str(i))
-        
-    am_str = f"<span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span>" if am else ""
-    pm_str = f"<span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span>" if pm else ""
-    off_str = f"<span style='color:#868e96; font-weight:bold; font-size:0.9em; margin-left:8px;'>휴무: {','.join(off)}</span>" if off else ""
+    am, pm = [], []
+    off_from_am, off_from_pm = [], []
     
-    return f"{am_str}{off_str}<br>{pm_str}"
+    # 어제 날짜 계산 (어제 근무 확인용)
+    prev_date = (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    for i in range(1, 11):
+        grp_name = f"{i}조"
+        s = calculate_auto_shift(grp_name, date_str)
+        
+        if s == "오전":
+            am.append(str(i))
+        elif s == "오후":
+            pm.append(str(i))
+        else:
+            # 휴무인 경우, 어제 근무를 확인해서 분류
+            prev_s = calculate_auto_shift(grp_name, prev_date)
+            if prev_s == "오전":
+                off_from_am.append(str(i)) # 어제 오전 -> 오늘 휴무 (상단 배치)
+            else:
+                off_from_pm.append(str(i)) # 어제 오후 -> 오늘 휴무 (하단 배치)
+        
+    # HTML 구성 (Flexbox로 좌우 정렬)
+    # 1행: 오전 (좌) - 휴무(오전끝) (우)
+    line1 = f"""
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:1px;'>
+        <span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span>
+        <span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_am)}</span>
+    </div>
+    """
+    
+    # 2행: 오후 (좌) - 휴무(오후끝) (우)
+    line2 = f"""
+    <div style='display:flex; justify-content:space-between; align-items:center;'>
+        <span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span>
+        <span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_pm)}</span>
+    </div>
+    """
+    
+    return line1 + line2
 
 @st.cache_data(ttl=600)
 def calculate_layout_rows(df_month):
