@@ -262,12 +262,21 @@ def get_driver_group_by_name(name):
         return row.iloc[0]['group_name']
     return None
 
+# [수정] 파스텔 톤 색상표 적용
 def get_type_color(type_name):
     colors = { 
-        "휴무": "#2b8a3e", "육아휴직": "#f59f00", "휴직": "#f59f00", "경조사": "#6741d9", 
-        "병가": "#c92a2a", "교육": "#d97706", "징계": "#000000", "당일 해지": "#e03131", "기타": "#343a40" 
+        "휴무": "#b2f2bb",      # 연한 초록 (눈 편안함)
+        "육아휴직": "#ffe066",  # 연한 노랑/오렌지
+        "휴직": "#ffe066",
+        "경조사": "#d0bfff",    # 연한 보라
+        "병가": "#ffc9c9",      # 연한 빨강
+        "당일 해지": "#ffa8a8", # 조금 진한 연한 빨강
+        "교육": "#ffec99",      # 연한 오렌지
+        "징계": "#343a40",      # 진한 회색 (경고 느낌, 글씨 흰색 예정)
+        "기타": "#e9ecef"       # 연한 회색
     }
-    return colors.get(type_name, "#1c7ed6")
+    # 기본값은 아주 연한 하늘색
+    return colors.get(type_name, "#a5d8ff")
 
 def get_off_groups(date_str):
     ref = datetime(2025, 12, 1)
@@ -681,7 +690,7 @@ def _render_calendar_tab_unsafe():
             for _, row in today_schedules.iterrows():
                 color = get_type_color(row['type'])
                 
-                # [수정] 징계/기타/경조사 = 흰색, 나머지 = 검은색
+                # [수정] 징계, 기타, 경조사는 흰색 글씨, 나머지는 검정
                 text_col = "white" if row['type'] in ["징계", "기타", "경조사"] else "black"
                 
                 prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
@@ -693,11 +702,11 @@ def _render_calendar_tab_unsafe():
                 if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_st:
                     s_info = f"[{row['shift']}] "
                 
-                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                 
-                # [수정] 검정 글씨 배경이면 원근무 색상을 진하게, 흰 글씨 배경이면 밝게
-                c_am = "#A5D8FF" if text_col == "white" else "#1864ab" # 밝은하늘 vs 진한파랑
-                c_pm = "#FFC9C9" if text_col == "white" else "#d9480f" # 연한빨강 vs 진한주황
+                # [수정] 원근무 표시 (전)/(후) 색상 적용
+                c_am = "#A5D8FF" if text_col == "white" else "#1864ab" # 진한 파랑(검정글씨용)
+                c_pm = "#FFC9C9" if text_col == "white" else "#d9480f" # 진한 빨강(검정글씨용)
                 
                 orig_info = ""
                 if orig_shift == "오전": orig_info = f"<span style='color:{c_am}; font-weight:bold;'>(전)</span> "
@@ -712,8 +721,8 @@ def _render_calendar_tab_unsafe():
                     if period_text: n_txt += f" {period_text}"
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{n_txt}</div>"
                 
-                # [수정] color: {text_col} 적용
-                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col};' title='{p_tip}'>{i_html}</div>"
+                # [수정] 모든 바에 얇은 테두리 적용 + color 적용
+                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col}; border: 1px solid rgba(0,0,0,0.1);' title='{p_tip}'>{i_html}</div>"
         html += '</div>'
         return html
 
@@ -758,14 +767,14 @@ def _render_calendar_tab_unsafe():
                         if item['is_start']: bar_class = "bar-start"
                         elif item['is_end']: bar_class = "bar-end"
                         else: bar_class = "bar-mid"
-                    border_style = ""
-                    if row['type'] in ['휴무', '경조사']:
-                        border_style = "border-top: 3px solid black; border-bottom: 3px solid black;"
-                        if bar_class == "bar-start": border_style += "border-left: 3px solid black;"
-                        elif bar_class == "bar-end": border_style += "border-right: 3px solid black;"
-                        elif bar_class == "bar-single": border_style = "border: 2px solid black;"
-                    else: border_style = "border: none;"
-                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                    
+                    # [수정] 모든 바에 테두리 적용 (연결 부위 제외)
+                    border_style = "border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1);"
+                    if bar_class == "bar-start": border_style += "border-left: 1px solid rgba(0,0,0,0.1);"
+                    elif bar_class == "bar-end": border_style += "border-right: 1px solid rgba(0,0,0,0.1);"
+                    elif bar_class == "bar-single": border_style = "border: 1px solid rgba(0,0,0,0.1);"
+
+                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                     
                     # [수정] 원근무 색상 자동 보정
                     c_am = "#A5D8FF" if text_col == "white" else "#1864ab"
