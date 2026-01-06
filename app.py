@@ -689,19 +689,21 @@ def _render_calendar_tab_unsafe():
                 if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_st:
                     s_info = f"[{row['shift']}] "
                 
-                # [추가] 원래 근무 표시 (이름 옆에 작게)
-                orig_mark = f"<span style='font-size:0.8em; color:#ddd; margin-left:2px;'>({orig_shift[0] if orig_shift else ''})</span>" if orig_shift else ""
+                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                 
-                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}{orig_mark}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                # [수정] 원래 근무 2번째 줄에 색상으로 표시
+                orig_info = ""
+                if orig_shift == "오전": orig_info = "<span style='color:#A5D8FF; font-weight:bold;'>(전)</span> "
+                elif orig_shift == "오후": orig_info = "<span style='color:#FFC9C9; font-weight:bold;'>(후)</span> "
                 
                 i_html = "" 
                 if row['type'] == '휴무':
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
-                    if period_text: i_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
+                    if period_text or orig_info: i_html += f"<div style='font-size:9px; opacity:0.9;'>{orig_info}{period_text}</div>"
                 else:
                     n_txt = row['note'] if row['note'] else row['type']
                     if period_text: n_txt += f" {period_text}"
-                    i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{n_txt}</div>"
+                    i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{n_txt}</div>"
                 
                 html += f"<div class='schedule-bar bar-single' style='background-color:{color};' title='{p_tip}'>{i_html}</div>"
         html += '</div>'
@@ -751,20 +753,21 @@ def _render_calendar_tab_unsafe():
                         elif bar_class == "bar-end": border_style += "border-right: 3px solid black;"
                         elif bar_class == "bar-single": border_style = "border: 2px solid black;"
                     else: border_style = "border: none;"
+                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                     
-                    # [추가] 원래 근무 표시 (가로 모드)
-                    orig_mark = f"<span style='font-size:0.8em; color:#ddd; margin-left:2px;'>({orig_shift[0] if orig_shift else ''})</span>" if orig_shift else ""
+                    # [수정] 원래 근무 2번째 줄에 색상으로 표시 (가로모드)
+                    orig_info = ""
+                    if orig_shift == "오전": orig_info = "<span style='color:#A5D8FF; font-weight:bold;'>(전)</span> "
+                    elif orig_shift == "오후": orig_info = "<span style='color:#FFC9C9; font-weight:bold;'>(후)</span> "
 
-                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}{orig_mark}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
-                    
                     inner_html = ""
                     if row['type'] == '휴무':
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
-                        if period_text: inner_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
+                        if period_text or orig_info: inner_html += f"<div style='font-size:9px; opacity:0.9;'>{orig_info}{period_text}</div>"
                     else:
                         note_text = row['note'] if row['note'] else row['type']
                         if period_text: note_text += f" {period_text}"
-                        inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{note_text}</div>"
+                        inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{note_text}</div>"
                     
                     html_content += f"<div class='schedule-bar {bar_class}' style='background-color:{color}; {border_style}; position:relative;' title='{personal_tooltip}'>{violation_marker}{inner_html}</div>"
                 else: html_content += "<div class='schedule-spacer'></div>"
