@@ -280,7 +280,7 @@ kr_holidays = holidays.KR()
 def is_holiday(date_obj):
     return date_obj in kr_holidays
 
-# [수정] 좌우 배분 (Flexbox) 및 휴무조 분리 (전날 오전근무자 / 전날 오후근무자)
+# [수정] HTML 코드를 한 줄로 병합하여 raw text 출력 문제 해결
 def get_daily_shift_summary(date_str):
     am, pm = [], []
     off_from_am, off_from_pm = [], []
@@ -302,19 +302,9 @@ def get_daily_shift_summary(date_str):
             else:
                 off_from_pm.append(str(i))
         
-    line1 = f"""
-    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:1px;'>
-        <span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span>
-        <span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_am)}</span>
-    </div>
-    """
+    line1 = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:1px;'><span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span><span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_am)}</span></div>"
+    line2 = f"<div style='display:flex; justify-content:space-between; align-items:center;'><span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span><span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_pm)}</span></div>"
     
-    line2 = f"""
-    <div style='display:flex; justify-content:space-between; align-items:center;'>
-        <span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span>
-        <span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_pm)}</span>
-    </div>
-    """
     return line1 + line2
 
 @st.cache_data(ttl=600)
