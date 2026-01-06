@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-import io
 import calendar
 import hashlib
 import gspread
@@ -10,10 +9,14 @@ import json
 import time
 
 # ==========================================
-# 0. 전역 설정 및 상수 (NameError 방지용)
+# 0. 로그 및 세션 초기화 (진단용)
 # ==========================================
-WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
-SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
+if 'app_logs' not in st.session_state:
+    st.session_state['app_logs'] = []
+
+def add_log(msg):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    st.session_state['app_logs'].insert(0, f"[{timestamp}] {msg}") # 최신 로그가 위로
 
 # ==========================================
 # 1. DB 연결 및 데이터 관리 (속도 최적화)
@@ -22,6 +25,7 @@ SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해
 def get_cached_sheet_object():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
+        t_start = time.perf_counter()
         if "gcp_json" in st.secrets:
             creds_dict = json.loads(st.secrets["gcp_json"])
         else:
@@ -32,6 +36,9 @@ def get_cached_sheet_object():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         sh = client.open("bus_schedule_db")
+        t_end = time.perf_counter()
+        # 최초 연결시에만 로그 남김
+        # add_log(f"시스템: 구글 시트 초기 연결 성공 ({t_end - t_start:.4f}초)")
         return sh
     except Exception as e:
         st.error(f"❌ 구글 연결 실패: {e}")
@@ -153,8 +160,10 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
+# [🚀 진단 모드] 상세 시간 측정
 def save_range_batch(name_list, start, end, type, shift, note):
-    t_start = time.time()
+    t0 = time.perf_counter()
+    
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
@@ -168,15 +177,31 @@ def save_range_batch(name_list, start, end, type, shift, note):
             row_id = f"{base_id}{count:02d}"
             rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
             count += 1
-            
+    
+    t1 = time.perf_counter() # 데이터 준비 완료
+    
     if rows_to_add:
-        sh = get_db_connection()
-        ws = sh.worksheet("schedules")
-        ws.append_rows(rows_to_add)
+        sh = get_db_connection() # 캐시된 객체 가져오기 (거의 0초)
+        t2 = time.perf_counter() # 연결 객체 로드 완료
+        
+        ws = sh.worksheet("schedules") # 워크시트 선택 (통신 발생 가능)
+        t3 = time.perf_counter() # 시트 선택 완료
+        
+        ws.append_rows(rows_to_add) # 실제 업로드 (가장 오래 걸림)
+        t4 = time.perf_counter() # 업로드 완료
+        
         clear_cache_after_save()
         
-    t_end = time.time()
-    st.toast(f"⚡ {t_end - t_start:.2f}초 저장 완료!", icon="🚀")
+        # 로그 기록
+        prep_time = t1 - t0
+        conn_time = t2 - t1
+        sheet_time = t3 - t2
+        upload_time = t4 - t3
+        total = t4 - t0
+        
+        log_msg = f"✅ 저장완료({len(rows_to_add)}건): 총 {total:.2f}초 [준비:{prep_time:.2f}s / 연결:{conn_time:.2f}s / 시트선택:{sheet_time:.2f}s / 📤업로드:{upload_time:.2f}s]"
+        add_log(log_msg)
+        
     return len(rows_to_add)
 
 def add_company_event(date, title):
@@ -187,8 +212,11 @@ def add_company_event(date, title):
     clear_cache_after_save()
 
 # ==========================================
-# 4. 로직 및 계산 함수
+# 4. 로직 및 계산 함수 (전역 변수 활용)
 # ==========================================
+WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
+SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
+
 def calculate_auto_shift(group_name, target_date_str):
     if not group_name or "조" not in group_name: return None
     try:
@@ -402,7 +430,7 @@ def show_input_dialog():
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 with st.spinner('저장 중입니다...'):
                     save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                st.success("저장되었습니다!"); st.rerun()
+                st.rerun()
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
         ed_list = st.date_input("행사 기간", [], help="시작/종료일", key="quick_event_range")
@@ -824,7 +852,8 @@ def render_individual_calendar_tab():
             my_schedules = df[(df['name'] == target_name) & (df['date'].astype(str).str.startswith(filter_ym))]
         cal = calendar.monthcalendar(target_year, target_month)
         cols = st.columns(7)
-        for i, w in enumerate(["월", "화", "수", "목", "금", "토", "일"]): cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{w}</div>", unsafe_allow_html=True)
+        for i, w in enumerate(WEEKDAY_KOREAN):
+            cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{w}</div>", unsafe_allow_html=True)
         for week in cal:
             cols = st.columns(7)
             for i, day in enumerate(week):
@@ -922,6 +951,16 @@ def main():
         with t1: render_calendar_tab()
         with t2: render_individual_calendar_tab()
         with t3: render_public_search_tab()
+    
+    # [로그 출력] 사이드바에 로그 표시
+    with st.sidebar:
+        st.divider()
+        with st.expander("📊 시스템 로그 (디버깅용)", expanded=True):
+            if st.session_state['app_logs']:
+                for log in st.session_state['app_logs']:
+                    st.text(log)
+            else:
+                st.caption("아직 기록된 로그가 없습니다.")
 
 if __name__ == '__main__':
     main()
