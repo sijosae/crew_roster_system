@@ -7,6 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import time
+import traceback
 
 # ==========================================
 # 1. DB 연결 (영구 캐싱 & 속도 최적화)
@@ -146,6 +147,7 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
+# [저장 최적화] 읽기 없이 쓰기만 수행 (속도 0.5초)
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
@@ -179,6 +181,7 @@ def add_company_event(date, title):
 # ==========================================
 # 4. 로직 및 계산 (전역 변수 & 딕셔너리 최적화)
 # ==========================================
+# [중요] 전역 상수로 정의하여 NameError 방지
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 
@@ -194,6 +197,7 @@ def calculate_auto_shift(group_name, target_date_str):
         return pat[((tgt - ref).days + off) % 10]
     except: return None
 
+# [최적화] Dictionary 사용
 def get_group_from_dict(history_dict, name, target_date_str):
     if name not in history_dict: return None
     records = history_dict[name]
@@ -330,26 +334,17 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     if (p_name, p_date_str) not in full_schedule_map: return "", "", ""
     curr = datetime.strptime(p_date_str, "%Y-%m-%d")
     start_date, end_date = curr, curr
-    
-    # [수정] 맵(Map)이 전체 데이터를 가지고 있으므로 월을 넘어가도 계속 찾습니다.
-    # 이전 날짜 검색
     while True:
         prev_d = (start_date - timedelta(days=1)).strftime("%Y-%m-%d")
-        if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: 
-            start_date -= timedelta(days=1)
+        if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: start_date -= timedelta(days=1)
         else: break
-    
-    # 다음 날짜 검색
     while True:
         next_d = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
-        if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: 
-            end_date += timedelta(days=1)
+        if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: end_date += timedelta(days=1)
         else: break
-        
     duration = (end_date - start_date).days + 1
     prefix, suffix = "", ""
     period_text = f"(~{end_date.month}/{end_date.day})"
-    
     if duration >= 2:
         is_start = (p_date_str == start_date.strftime("%Y-%m-%d"))
         is_end = (p_date_str == end_date.strftime("%Y-%m-%d"))
@@ -457,18 +452,11 @@ def render_calendar_tab():
     selected_month = st.session_state.view_month
     
     df = load_data("schedules")
-    
-    # [수정] 렌더링은 해당 월만 필터링 (화면 그리기 용)
     if not df.empty:
         filter_keyword = f"{selected_year}-{selected_month:02d}"
         df_month = df[df['date'].astype(str).str.startswith(filter_keyword)]
     else:
         df_month = pd.DataFrame(columns=['id', 'name', 'date', 'type', 'shift', 'note', 'created_at'])
-
-    # [수정] 휴무 연속성 계산은 전체 데이터(df)로 맵핑 (월 넘어가도 계산되게)
-    full_schedule_map = {}
-    if not df.empty:
-        for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
 
     df_events = load_data("company_events")
     if not df_events.empty:
@@ -487,6 +475,11 @@ def render_calendar_tab():
             history_dict[d_name].append((row['start_date'], row['group_name']))
         for d_name in history_dict:
             history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
+            
+    full_schedule_map = {}
+    if not df.empty:
+        # [중요] 전체 데이터로 맵핑 (월간 경계 없음)
+        for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
     
     _, last_day = calendar.monthrange(selected_year, selected_month)
 
@@ -789,6 +782,107 @@ def render_driver_manage_tab():
                         if st.button("삭제", key=f"del_user_{row['username']}"):
                             delete_user_account(row['username'])
                             st.success("삭제됨"); st.rerun()
+    st.divider()
+    drivers = load_data("drivers")
+    if not drivers.empty:
+        search_dr = st.text_input("승무원 명부 검색")
+        if search_dr and 'name' in drivers.columns: 
+            drivers = drivers[drivers['name'].str.contains(search_dr)]
+        if 'resigned_date' in drivers.columns:
+            drivers['status'] = drivers['resigned_date'].apply(lambda x: f"퇴사 ({x})" if x else "재직")
+            st.dataframe(drivers[['name', 'group_name', 'status']], hide_index=True, use_container_width=True, height=800)
+        else:
+            st.dataframe(drivers, use_container_width=True)
+        with st.expander("🗑️ 승무원 삭제"):
+            if 'name' in drivers.columns:
+                del_target = st.selectbox("삭제 대상", drivers['name'].tolist(), key="del")
+                if st.button("영구 삭제"): 
+                    delete_driver(del_target)
+                    st.rerun()
+
+def render_individual_calendar_tab():
+    st.subheader("👤 승무원별 월간 근무 현황")
+    inject_custom_css()
+    try:
+        drivers = load_data("drivers")
+        df = load_data("schedules")
+        group_history_df = load_data("group_history")
+    except Exception as e:
+        st.error(f"데이터 로드 중 오류 발생: {e}")
+        return
+    if drivers.empty: 
+        st.warning("승무원을 먼저 등록하세요.")
+        return
+    now = get_kst_now()
+    if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
+    if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
+    c_sel, c_prev, c_date, c_next = st.columns([1.5, 0.5, 1, 0.5])
+    with c_sel: target_name = st.selectbox("승무원 선택", drivers['name'].tolist())
+    with c_prev:
+        if st.button("◀", key="ind_prev", use_container_width=True):
+            if st.session_state.indiv_view_month == 1:
+                st.session_state.indiv_view_year -= 1; st.session_state.indiv_view_month = 12
+            else: st.session_state.indiv_view_month -= 1
+            st.rerun()
+    with c_date: st.markdown(f"<h3 style='text-align:center; margin:0; padding-top:5px;'>{st.session_state.indiv_view_year}년 {st.session_state.indiv_view_month}월</h3>", unsafe_allow_html=True)
+    with c_next:
+        if st.button("▶", key="ind_next", use_container_width=True):
+            if st.session_state.indiv_view_month == 12:
+                st.session_state.indiv_view_year += 1; st.session_state.indiv_view_month = 1
+            else: st.session_state.indiv_view_month += 1
+            st.rerun()
+    target_year = st.session_state.indiv_view_year
+    target_month = st.session_state.indiv_view_month
+    
+    # [수정] 개인별 화면에서도 오류 없도록 안전 장치 적용
+    history_dict = {}
+    if not group_history_df.empty and 'driver_name' in group_history_df.columns:
+        for idx, row in group_history_df.iterrows():
+            d_name = row['driver_name']
+            if d_name not in history_dict: history_dict[d_name] = []
+            history_dict[d_name].append((row['start_date'], row['group_name']))
+        for d_name in history_dict:
+            history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
+
+    if target_name:
+        st.markdown(f"### 🚍 **{target_name}**"); st.divider()
+        filter_ym = f"{target_year}-{target_month:02d}"
+        my_schedules = pd.DataFrame()
+        if not df.empty and 'name' in df.columns and 'date' in df.columns:
+            my_schedules = df[(df['name'] == target_name) & (df['date'].astype(str).str.startswith(filter_ym))]
+        cal = calendar.monthcalendar(target_year, target_month)
+        cols = st.columns(7)
+        for i, w in enumerate(WEEKDAY_KOREAN):
+            cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{w}</div>", unsafe_allow_html=True)
+        for week in cal:
+            cols = st.columns(7)
+            for i, day in enumerate(week):
+                with cols[i]:
+                    if day == 0: st.write("")
+                    else:
+                        d_str = f"{target_year}-{target_month:02d}-{day:02d}"
+                        eff_grp = get_group_from_dict(history_dict, target_name, d_str)
+                        auto = calculate_auto_shift(eff_grp, d_str)
+                        d_sch = pd.DataFrame()
+                        if not my_schedules.empty: d_sch = my_schedules[my_schedules['date'] == d_str]
+                        cell_bg = "transparent"
+                        text_color = "black"
+                        sub_text = ""
+                        if not d_sch.empty:
+                            r = d_sch.iloc[0]
+                            t = r['type']
+                            if t == "휴무": cell_bg = "#ffc9c9"; text_color = "#c92a2a"; sub_text = "휴무"
+                            elif t in ["교육", "경조사", "병가", "휴직"]: cell_bg = "#ffe8cc"; text_color = "#d9480f"; sub_text = t
+                            else: cell_bg = "#f1f3f5"; sub_text = t
+                        elif auto:
+                            if auto == "오전": cell_bg = "#e7f5ff"; text_color = "#1864ab"; sub_text = f"오전 ({eff_grp})"
+                            elif auto == "오후": cell_bg = "#fff4e6"; text_color = "#e67700"; sub_text = f"오후 ({eff_grp})"
+                            elif auto == "휴무": cell_bg = "#f8f9fa"; text_color = "#868e96"; sub_text = f"휴무 ({eff_grp})"
+                        st.markdown(f"""
+                        <div style='background-color:{cell_bg}; border:1px solid #dee2e6; border-radius:5px; padding:5px; min-height:80px; display:flex; flex-direction:column; justify-content:space-between; height:100%;'>
+                            <div style='font-weight:bold; font-size:14px; color:#333;'>{day}</div>
+                            <div style='text-align:center; font-weight:bold; font-size:13px; color:{text_color}; margin-top:5px;'>{sub_text}</div>
+                        </div>""", unsafe_allow_html=True)
 
 def render_view_manage_tab():
     st.subheader("📊 조회 및 관리")
