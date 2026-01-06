@@ -10,25 +10,32 @@ import time
 import traceback
 
 # ==========================================
-# 0. 로그 및 초기화
+# 0. 로그 및 초기화 (실행 취소 기능 탑재)
 # ==========================================
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-if 'system_logs' not in st.session_state:
-    st.session_state['system_logs'] = []
+# 로그를 딕셔너리 형태로 저장 (메시지 + 삭제할 ID 리스트)
+if 'action_logs' not in st.session_state:
+    st.session_state['action_logs'] = []
 
-# [추가] 에러를 메인 화면에 고정하기 위한 변수
 if 'last_error_msg' not in st.session_state:
     st.session_state['last_error_msg'] = None
 
-def add_log(msg, level="INFO"):
+def add_log(msg, ids=None, sheet_name=None, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    icon = "✅" if level == "INFO" else "🚨"
-    st.session_state['system_logs'].insert(0, f"[{timestamp}] {icon} {msg}")
+    log_entry = {
+        "time": timestamp,
+        "msg": msg,
+        "level": level,
+        "ids": ids if ids else [],
+        "sheet": sheet_name,
+        "status": "active" # 취소되면 canceled로 변경
+    }
+    st.session_state['action_logs'].insert(0, log_entry)
 
 # ==========================================
-# 1. DB 연결
+# 1. DB 연결 (영구 캐싱)
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -70,7 +77,41 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 2. 인증
+# 2. 실행 취소 (Undo) 로직
+# ==========================================
+def delete_rows_by_ids(sheet_name, id_list):
+    """지정된 ID를 가진 행을 찾아서 삭제하는 함수"""
+    if not id_list: return False
+    
+    sh = get_db_connection()
+    ws = sh.worksheet(sheet_name)
+    
+    # 모든 데이터 가져오기 (1열이 ID라고 가정)
+    col_values = ws.col_values(1) 
+    
+    # 삭제할 행 번호 찾기 (뒤에서부터 지워야 인덱스가 안 꼬임)
+    rows_to_delete = []
+    for target_id in id_list:
+        try:
+            # 리스트에서 ID 위치 찾기 (헤더 제외 인덱스 보정 필요할 수 있음)
+            # col_values는 1부터 시작하는 행 번호와 매칭됨
+            # 값이 여러개일 수 있으니 주의. 여기서는 ID가 유니크하다고 가정.
+            row_idx = col_values.index(target_id) + 1
+            rows_to_delete.append(row_idx)
+        except ValueError:
+            continue # 이미 지워졌거나 없으면 패스
+            
+    # 내림차순 정렬 (아래쪽 행부터 지워야 함)
+    rows_to_delete.sort(reverse=True)
+    
+    for r_idx in rows_to_delete:
+        ws.delete_rows(r_idx)
+        
+    clear_cache_after_save()
+    return True
+
+# ==========================================
+# 3. 인증 및 계정
 # ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
@@ -117,7 +158,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 3. 데이터 저장
+# 4. 데이터 저장 (ID 리스트 반환)
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -169,11 +210,15 @@ def save_range_batch(name_list, start, end, type, shift, note):
     base_id = now_kst.strftime("%y%m%d%H%M") 
     
     rows_to_add = []
+    generated_ids = [] # Undo를 위해 생성된 ID 추적
     count = 0
+    
     for name in name_list:
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
             row_id = f"{base_id}{count:02d}"
+            generated_ids.append(row_id)
+            
             rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
             count += 1
             
@@ -183,7 +228,7 @@ def save_range_batch(name_list, start, end, type, shift, note):
         ws.append_rows(rows_to_add)
         clear_cache_after_save()
         
-    return len(rows_to_add)
+    return len(rows_to_add), generated_ids
 
 def add_company_event(date, title):
     sh = get_db_connection()
@@ -191,11 +236,13 @@ def add_company_event(date, title):
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d")
     row_id = now_kst.strftime("%y%m%d%H%M%S")
+    
     ws.append_row([row_id, date, title, created_at])
     clear_cache_after_save()
+    return row_id
 
 # ==========================================
-# 4. 로직 및 계산
+# 5. 로직 및 계산
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -375,7 +422,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 5. 화면 렌더링 (팝업 고정 및 에러 유지)
+# 6. 화면 렌더링 (CSS, 탭)
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -424,29 +471,29 @@ def show_input_dialog():
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
         
-        # [수정] 성공 시 자동 새로고침, 실패 시 정지(Stop)
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 try:
                     with st.spinner('저장 중입니다...'):
-                        save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                        count, ids = save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
                     
-                    st.success("✅ 저장 완료! (1.5초 후 새로고침)")
-                    add_log(f"입력 성공: {len(lst)}명, {rng[0]}~{rng[-1]}, {typ}")
+                    # [변경] 상단에 큰 성공 박스 표시 (0.7초 동안 유지)
+                    st.success(f"✅ 저장 완료! (총 {count}건)")
                     
-                    # 1.5초 대기 후 자동 새로고침
-                    time.sleep(1.5)
+                    # 로그 기록 (누가, 언제, 무엇을, ID)
+                    log_msg = f"{', '.join(lst)} ({rng[0]}~{rng[-1]}, {typ})"
+                    add_log(log_msg, ids=ids, sheet_name="schedules")
+                    
+                    time.sleep(0.7)
                     st.rerun()
                     
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
-                    add_log(error_msg, "ERROR")
-                    st.session_state['last_error_msg'] = error_msg # 메인화면에 박제
-                    
-                    st.error("🚨 저장 중 오류가 발생했습니다! (멈춤)")
+                    st.session_state['last_error_msg'] = error_msg 
+                    st.error("🚨 저장 중 오류 발생!")
                     st.text_area("에러 상세 (복사 가능)", error_msg, height=200)
-                    st.stop() # 여기서 멈춤
+                    st.stop()
             else:
                 st.warning("이름과 기간을 입력해주세요.")
 
@@ -459,37 +506,62 @@ def show_input_dialog():
                 try:
                     with st.spinner('저장 중입니다...'):
                         s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
-                        for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
+                        for d in pd.date_range(s_d, e_d): 
+                             row_id = add_company_event(d.strftime("%Y-%m-%d"), et)
                         st.cache_data.clear()
                     
-                    st.success("✅ 행사가 저장되었습니다! (1.5초 후 새로고침)")
-                    time.sleep(1.5)
+                    st.success("✅ 행사 저장 완료!")
+                    # 행사 로그는 간단하게 처리 (삭제 구현을 위해 ID 리스트가 필요하다면 여기서도 수집해야 함)
+                    add_log(f"행사 등록: {et} ({s_d}~{e_d})", sheet_name="company_events")
+                    
+                    time.sleep(0.7)
                     st.rerun()
                     
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     st.session_state['last_error_msg'] = error_msg
-                    add_log(f"행사 저장 실패: {str(e)}", "ERROR")
                     st.error("오류 발생")
                     st.text_area("에러 상세", error_msg, height=200)
                     st.stop()
             else: st.warning("기간과 내용을 모두 입력해주세요.")
 
 def render_log_tab():
-    st.subheader("🔧 시스템 로그 (관리자 전용)")
-    if st.button("🗑️ 로그 비우기"):
-        st.session_state['system_logs'] = []
-        st.session_state['last_error_msg'] = None
+    st.subheader("🔧 시스템 로그 및 실행 취소")
+    st.info("💡 최근 작업 내역을 확인하고 [실행 취소] 할 수 있습니다. (데이터베이스에서 즉시 삭제됨)")
+    
+    if st.button("🗑️ 로그 전체 비우기 (화면에서만 삭제)"):
+        st.session_state['action_logs'] = []
         st.rerun()
-    if st.session_state['system_logs']:
-        log_text = "\n".join(st.session_state['system_logs'])
-        st.text_area("로그 내역", log_text, height=400)
+    
+    st.divider()
+    
+    if st.session_state['action_logs']:
+        for i, log in enumerate(st.session_state['action_logs']):
+            c1, c2, c3 = st.columns([1, 4, 1])
+            with c1: st.write(log['time'])
+            with c2: st.write(f"{'✅' if log['level']=='INFO' else '🚨'} {log['msg']}")
+            with c3:
+                # 활성 상태이고, ID가 있는 경우에만 취소 버튼 표시
+                if log['status'] == 'active' and log.get('ids') and log.get('sheet'):
+                    if st.button("↩️ 실행 취소", key=f"undo_{i}"):
+                        with st.spinner("삭제 중..."):
+                            success = delete_rows_by_ids(log['sheet'], log['ids'])
+                            if success:
+                                log['status'] = 'canceled'
+                                log['msg'] += " (취소됨)"
+                                st.success("실행 취소 완료!")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("삭제 실패 (이미 삭제되었을 수 있음)")
+                elif log['status'] == 'canceled':
+                    st.caption("취소됨")
+            st.divider()
     else:
-        st.info("기록된 로그가 없습니다.")
+        st.caption("아직 기록된 로그가 없습니다.")
 
 # [중요] 렌더링 에러 방지용 Wrapper 함수
 def render_calendar_tab():
-    # 만약 저장 중 에러가 있었다면 최상단에 표시 (팝업 꺼져도 보임)
     if st.session_state.get('last_error_msg'):
         st.error("🚨 방금 전 저장 중 오류가 발생했습니다!")
         st.code(st.session_state['last_error_msg'])
@@ -534,7 +606,6 @@ def _render_calendar_tab_unsafe():
     
     df = load_data("schedules")
     
-    # [수정] 렌더링은 해당 월만 필터링 (화면 그리기 용)
     if not df.empty:
         filter_keyword = f"{selected_year}-{selected_month:02d}"
         df_month = df[df['date'].astype(str).str.startswith(filter_keyword)]
@@ -688,7 +759,7 @@ def _render_calendar_tab_unsafe():
                     name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                     if row['type'] == '휴무':
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
-                        if period_text: inner_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
+                        if period_text: i_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
                     else:
                         note_text = row['note'] if row['note'] else row['type']
                         if period_text: note_text += f" {period_text}"
@@ -715,7 +786,6 @@ def render_input_tab():
     st.subheader("📝 관리자 입력")
     t1, t2 = st.tabs(["휴무 등록", "행사 등록"])
     with t1:
-        # [수정] 다이얼로그와 키 중복을 피하기 위해 key 이름 변경 (tab_...)
         c1, c2 = st.columns([2, 1])
         with c1: names_str = st.text_area("이름 (엔터 구분)", height=68, key="tab_names")
         with c2: rng = st.date_input("기간", [], help="시작/종료일 선택", key="tab_range")
