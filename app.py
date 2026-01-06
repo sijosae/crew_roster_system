@@ -7,13 +7,15 @@ import hashlib
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+import time  # 시간 측정을 위한 모듈
 
-# === 1. [속도 핵심] 구글 연결(인증)을 메모리에 박제 (캐싱) ===
-# 이 함수는 앱이 켜질 때 딱 1번만 실행되고, 그 뒤로는 저장된 연결을 재사용합니다.
+# === 1. [속도 최적화 끝판왕] 연결 객체 자체를 캐싱 ===
+# 인증(Auth) 뿐만 아니라, 파일(Spreadsheet)을 여는 과정까지 미리 해서 기억해둡니다.
 @st.cache_resource
-def init_connection():
+def get_cached_sheet_object():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
+        # 1. 인증
         if "gcp_json" in st.secrets:
             creds_dict = json.loads(st.secrets["gcp_json"])
         else:
@@ -23,20 +25,22 @@ def init_connection():
         
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        return client
+        
+        # 2. 파일 열기 (이 과정이 인터넷 통신이라 느립니다. 그래서 캐싱합니다.)
+        sh = client.open("bus_schedule_db")
+        return sh
     except Exception as e:
-        st.error(f"❌ 구글 인증 실패: {e}")
+        st.error(f"❌ 구글 연결 실패: {e}")
         return None
 
+# 일반 함수에서는 캐싱된 객체를 바로 가져다 씁니다.
 def get_db_connection():
-    client = init_connection()
-    if client:
-        return client.open("bus_schedule_db")
+    sh = get_cached_sheet_object()
+    if sh: return sh
     st.stop()
 
-# === [시간 수정] 한국 시간(KST) 구하는 함수 ===
+# === 시간 유틸리티 (KST) ===
 def get_kst_now():
-    # 서버 시간(UTC)에 9시간을 더해줍니다.
     return datetime.utcnow() + timedelta(hours=9)
 
 # === 데이터 로딩 ===
@@ -65,11 +69,9 @@ def make_hash(password):
 def login_user(username, password):
     df = load_data("users")
     if df.empty: return None
-    
     pw_hash = make_hash(password)
     df['username'] = df['username'].astype(str)
     user = df[(df['username'] == username) & (df['password'] == pw_hash)]
-    
     if not user.empty:
         return user.iloc[0]['role'], user.iloc[0]['name']
     return None
@@ -77,7 +79,6 @@ def login_user(username, password):
 def add_user_account(username, password, role, name):
     df = load_data("users")
     if not df.empty and username in df['username'].astype(str).values: return False
-    # 날짜도 KST로 저장
     k_date = get_kst_now().strftime("%Y-%m-%d")
     new_row = [username, make_hash(password), role, name, k_date]
     save_data("users", new_row)
@@ -105,18 +106,16 @@ def update_user_password(username, new_password):
     except: pass
     return False
 
-# === 승무원 관리 함수 ===
+# === 승무원 관리 ===
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
     ws_drivers = sh.worksheet("drivers")
     created_at = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    
     try:
         existing = ws_drivers.find(name)
         if not existing:
             ws_drivers.append_row(["", name, group_name, created_at, ""])
     except: pass
-
     ws_history = sh.worksheet("group_history")
     ws_history.append_row(["", name, group_name, start_date, created_at])
     st.cache_data.clear()
@@ -160,7 +159,7 @@ def get_driver_group_by_name(name):
         return row.iloc[0]['group_name']
     return None
 
-# === 스케줄 및 계산 함수 ===
+# === 계산 로직 ===
 def calculate_auto_shift(group_name, target_date_str):
     if not group_name or "조" not in group_name: return None
     try:
@@ -183,13 +182,17 @@ def get_group_by_date_memory(history_df, name, target_date_str):
         return valid_rows.iloc[0]['group_name']
     return None
 
+# [진단 기능 포함] 저장 함수
 def save_range_batch(name_list, start, end, type, shift, note):
+    t_start = time.time() # 시작 시간
+    
     dates = pd.date_range(start, end)
-    # [수정 2] 한국 시간(KST) 적용
     created_at = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     rows_to_add = []
     
+    t_load = time.time()
     df_schedules = load_data("schedules")
+    t_load_end = time.time()
     
     next_id = 1
     if not df_schedules.empty and 'id' in df_schedules.columns:
@@ -213,12 +216,25 @@ def save_range_batch(name_list, start, end, type, shift, note):
                 rows_to_add.append([next_id, name, d_str, type, note, created_at, shift])
                 next_id += 1 
     
+    t_prep_end = time.time()
+    
     if rows_to_add:
-        sh = get_db_connection()
-        ws = sh.worksheet("schedules")
-        ws.append_rows(rows_to_add)
+        # 여기가 실제 구글 통신 부분
+        sh = get_db_connection() # 캐싱돼서 0초여야 함
+        ws = sh.worksheet("schedules") # 이건 통신 필요 (약 1초)
+        ws.append_rows(rows_to_add) # 이게 진짜 저장 (데이터 양에 따라 1~3초)
         st.cache_data.clear()
         
+    t_final = time.time()
+    
+    # [진단 결과 출력]
+    total_time = t_final - t_start
+    read_time = t_load_end - t_load
+    write_time = t_final - t_prep_end
+    
+    msg = f"⏱️ 총 {total_time:.1f}초 (읽기:{read_time:.1f}s / 준비:{t_prep_end-t_load_end:.1f}s / 쓰기:{write_time:.1f}s)"
+    st.toast(msg, icon="🚀")
+    
     return len(rows_to_add)
 
 def add_company_event(date, title):
@@ -257,9 +273,9 @@ def is_holiday(date_obj):
 def inject_custom_css():
     st.markdown("""
     <style>
-        /* [수정 1] 상단 바(Header) 가림 문제 해결: 여백을 6rem으로 확 늘림 */
+        /* [수정 1] 상단 여백 6rem -> 3.5rem (절반 정도 줄임) */
         .block-container { 
-            padding-top: 6rem !important; 
+            padding-top: 3.5rem !important; 
             padding-bottom: 1rem !important; 
             padding-left: 1rem !important; 
             padding-right: 1rem !important; 
