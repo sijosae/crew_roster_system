@@ -10,7 +10,7 @@ import time
 import traceback
 
 # ==========================================
-# 0. 로그 시스템 및 초기화
+# 0. 로그 및 초기화 (에러 박제 기능 추가)
 # ==========================================
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
@@ -18,13 +18,17 @@ def get_kst_now():
 if 'system_logs' not in st.session_state:
     st.session_state['system_logs'] = []
 
+# [추가] 에러를 메인 화면에 고정하기 위한 변수
+if 'last_error_msg' not in st.session_state:
+    st.session_state['last_error_msg'] = None
+
 def add_log(msg, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     icon = "✅" if level == "INFO" else "🚨"
     st.session_state['system_logs'].insert(0, f"[{timestamp}] {icon} {msg}")
 
 # ==========================================
-# 1. DB 연결 (영구 캐싱)
+# 1. DB 연결
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -66,7 +70,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 2. 인증 및 계정
+# 2. 인증
 # ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
@@ -371,7 +375,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 5. 화면 렌더링
+# 5. 화면 렌더링 (팝업 고정 및 에러 유지)
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -420,27 +424,34 @@ def show_input_dialog():
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
         
-        # [수정] 성공 시 자동 새로고침, 실패 시 정지(Stop)
+        # [수정] 성공 시에만 팝업 종료하고 안내, 실패시 멈춤
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
+                # 안전장치: 전체를 try-except로 감쌈
                 try:
                     with st.spinner('저장 중입니다...'):
                         save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
                     
-                    st.success("✅ 저장 완료! (1.5초 후 새로고침)")
+                    # 성공하면 에러 메시지 초기화
+                    st.session_state['last_error_msg'] = None
+                    st.success("✅ 저장이 완료되었습니다! 창을 닫아주세요.")
                     add_log(f"입력 성공: {len(lst)}명, {rng[0]}~{rng[-1]}, {typ}")
                     
-                    # 1.5초 대기 후 자동 새로고침
-                    time.sleep(1.5)
-                    st.rerun()
+                    # 자동 새로고침 없이, 사용자가 직접 닫게 유도 (가장 안전함)
+                    # 만약 닫고 싶다면 아래 주석을 푸세요
+                    # time.sleep(1)
+                    # st.rerun() 
                     
                 except Exception as e:
+                    # 실패하면 에러를 세션에 저장 (팝업 꺼져도 보이게)
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
+                    st.session_state['last_error_msg'] = error_msg # 메인화면에 박제
                     add_log(error_msg, "ERROR")
-                    st.error("🚨 저장 중 오류 발생!")
-                    st.text_area("에러 상세 (복사 가능)", error_msg, height=200)
-                    st.stop() # 에러 시 멈춤!
+                    
+                    st.error("🚨 저장 중 오류가 발생했습니다! (멈춤)")
+                    st.text_area("에러 상세", error_msg, height=200)
+                    st.stop() # 여기서 멈춤
             else:
                 st.warning("이름과 기간을 입력해주세요.")
 
@@ -455,24 +466,24 @@ def show_input_dialog():
                         s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
                         for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
                         st.cache_data.clear()
-                    
-                    st.success("✅ 행사가 저장되었습니다! (1.5초 후 새로고침)")
-                    time.sleep(1.5)
-                    st.rerun()
-                    
+                    st.session_state['last_error_msg'] = None
+                    st.success("✅ 행사가 저장되었습니다! 창을 닫아주세요.")
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
+                    st.session_state['last_error_msg'] = error_msg
                     add_log(f"행사 저장 실패: {str(e)}", "ERROR")
                     st.error("오류 발생")
                     st.text_area("에러 상세", error_msg, height=200)
-                    st.stop() # 에러 시 멈춤!
+                    st.stop()
             else: st.warning("기간과 내용을 모두 입력해주세요.")
 
 def render_log_tab():
     st.subheader("🔧 시스템 로그 (관리자 전용)")
     if st.button("🗑️ 로그 비우기"):
         st.session_state['system_logs'] = []
+        st.session_state['last_error_msg'] = None # 에러 메시지도 초기화
         st.rerun()
+    
     if st.session_state['system_logs']:
         log_text = "\n".join(st.session_state['system_logs'])
         st.text_area("로그 내역", log_text, height=400)
@@ -481,6 +492,14 @@ def render_log_tab():
 
 # [중요] 렌더링 에러 방지용 Wrapper 함수
 def render_calendar_tab():
+    # 만약 저장 중 에러가 있었다면 최상단에 표시 (팝업 꺼져도 보임)
+    if st.session_state.get('last_error_msg'):
+        st.error("🚨 방금 전 저장 중 오류가 발생했습니다!")
+        st.code(st.session_state['last_error_msg'])
+        if st.button("에러 메시지 닫기"):
+            st.session_state['last_error_msg'] = None
+            st.rerun()
+            
     try:
         _render_calendar_tab_unsafe()
     except Exception:
@@ -707,7 +726,7 @@ def render_input_tab():
             st.caption(f"{len(names_str.split())}명 선택됨")
         c3, c4 = st.columns(2)
         with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
-        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
+        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"])
         nte = st.text_input("비고")
         st.markdown('<div class="red-button">', unsafe_allow_html=True)
         if st.button("일괄 저장", type="primary", use_container_width=True):
