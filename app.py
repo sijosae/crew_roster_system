@@ -10,7 +10,7 @@ import time
 import traceback
 
 # ==========================================
-# 0. 로그 및 초기화
+# 0. 로그 시스템 및 초기화
 # ==========================================
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
@@ -24,7 +24,7 @@ def add_log(msg, level="INFO"):
     st.session_state['system_logs'].insert(0, f"[{timestamp}] {icon} {msg}")
 
 # ==========================================
-# 1. DB 연결
+# 1. DB 연결 (영구 캐싱)
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -66,7 +66,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 2. 인증
+# 2. 인증 및 계정
 # ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
@@ -113,7 +113,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 3. 데이터 저장
+# 3. 데이터 저장 (ID 생성 및 속도 최적화)
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -158,6 +158,7 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
+# [저장] 쓰기 전용 함수
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
@@ -170,7 +171,6 @@ def save_range_batch(name_list, start, end, type, shift, note):
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
             row_id = f"{base_id}{count:02d}"
-            # [수정] ID, Name, Date, Type, Note, CreatedAt, Shift
             rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
             count += 1
             
@@ -182,12 +182,12 @@ def save_range_batch(name_list, start, end, type, shift, note):
         
     return len(rows_to_add)
 
+# [저장] 행사 저장 (ID 포함)
 def add_company_event(date, title):
     sh = get_db_connection()
     ws = sh.worksheet("company_events")
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d")
-    # ID 생성
     row_id = now_kst.strftime("%y%m%d%H%M%S")
     ws.append_row([row_id, date, title, created_at])
     clear_cache_after_save()
@@ -349,16 +349,19 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     if (p_name, p_date_str) not in full_schedule_map: return "", "", ""
     curr = datetime.strptime(p_date_str, "%Y-%m-%d")
     start_date, end_date = curr, curr
+    
     while True:
         prev_d = (start_date - timedelta(days=1)).strftime("%Y-%m-%d")
         if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: 
             start_date -= timedelta(days=1)
         else: break
+    
     while True:
         next_d = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
         if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: 
             end_date += timedelta(days=1)
         else: break
+        
     duration = (end_date - start_date).days + 1
     prefix, suffix = "", ""
     period_text = f"(~{end_date.month}/{end_date.day})"
@@ -370,7 +373,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 5. 화면 렌더링 (팝업 고정 및 에러 유지)
+# 5. 화면 렌더링 (CSS 및 탭 구성)
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -419,7 +422,7 @@ def show_input_dialog():
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
         
-        # [중요] 저장 버튼 누르면 st.rerun()을 하지 않습니다.
+        # [수정] 성공 시 자동 새로고침, 실패 시 정지(Stop)
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
@@ -427,16 +430,19 @@ def show_input_dialog():
                     with st.spinner('저장 중입니다...'):
                         save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
                     
-                    st.success("✅ 저장 완료! (창을 닫으면 새로고침됩니다)")
+                    st.success("✅ 저장 완료! (1.5초 후 새로고침)")
                     add_log(f"입력 성공: {len(lst)}명, {rng[0]}~{rng[-1]}, {typ}")
-                    # 여기서 st.rerun()을 제거함 -> 화면이 멈춰있음
+                    
+                    # 1.5초 대기 후 자동 새로고침
+                    time.sleep(1.5)
+                    st.rerun()
                     
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     add_log(error_msg, "ERROR")
                     st.error("🚨 저장 중 오류 발생!")
                     st.text_area("에러 상세 (복사 가능)", error_msg, height=200)
-                    st.stop() # 더 이상 진행하지 않고 멈춤
+                    st.stop() # 에러 시 멈춤!
             else:
                 st.warning("이름과 기간을 입력해주세요.")
 
@@ -451,14 +457,17 @@ def show_input_dialog():
                         s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
                         for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
                         st.cache_data.clear()
-                    st.success("✅ 행사가 저장되었습니다! (창을 닫으세요)")
-                    # st.rerun() 제거
+                    
+                    st.success("✅ 행사가 저장되었습니다! (1.5초 후 새로고침)")
+                    time.sleep(1.5)
+                    st.rerun()
+                    
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
                     add_log(f"행사 저장 실패: {str(e)}", "ERROR")
                     st.error("오류 발생")
                     st.text_area("에러 상세", error_msg, height=200)
-                    st.stop()
+                    st.stop() # 에러 시 멈춤!
             else: st.warning("기간과 내용을 모두 입력해주세요.")
 
 def render_log_tab():
@@ -511,12 +520,14 @@ def _render_calendar_tab_unsafe():
     
     df = load_data("schedules")
     
+    # [수정] 렌더링은 해당 월만 필터링 (화면 그리기 용)
     if not df.empty:
         filter_keyword = f"{selected_year}-{selected_month:02d}"
         df_month = df[df['date'].astype(str).str.startswith(filter_keyword)]
     else:
         df_month = pd.DataFrame(columns=['id', 'name', 'date', 'type', 'shift', 'note', 'created_at'])
 
+    # [수정] 휴무 연속성 계산은 전체 데이터(df)로 맵핑 (월 넘어가도 계산되게)
     full_schedule_map = {}
     if not df.empty:
         for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
@@ -687,337 +698,4 @@ def _render_calendar_tab_unsafe():
                     if day == 0: st.markdown("<div class='calendar-day-box' style='background-color:#f8f9fa; min-height:200px;'></div>", unsafe_allow_html=True)
                     else: st.markdown(get_day_html(day, is_horiz=False), unsafe_allow_html=True)
 
-def render_input_tab():
-    st.subheader("📝 관리자 입력")
-    t1, t2 = st.tabs(["휴무 등록", "행사 등록"])
-    with t1:
-        c1, c2 = st.columns([2, 1])
-        with c1: names_str = st.text_area("이름 (엔터 구분)", height=68)
-        with c2: rng = st.date_input("기간", [], help="시작/종료일 선택")
-        if names_str and len(rng) > 0:
-            st.caption(f"{len(names_str.split())}명 선택됨")
-        c3, c4 = st.columns(2)
-        with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
-        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"])
-        nte = st.text_input("비고")
-        st.markdown('<div class="red-button">', unsafe_allow_html=True)
-        if st.button("일괄 저장", type="primary", use_container_width=True):
-            if names_str and len(rng) > 0:
-                lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
-                # [안전장치] 에러 발생 시 멈춤
-                try:
-                    with st.spinner('저장 중입니다...'):
-                        save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                    st.toast("저장 완료!", icon="✅")
-                    time.sleep(1)
-                    st.rerun()
-                except Exception:
-                    st.error("🚨 저장 중 오류가 발생했습니다.")
-                    st.code(traceback.format_exc())
-            else: st.warning("이름과 기간을 입력해주세요.")
-    with t2:
-        c_e1, c_e2 = st.columns([2, 1])
-        with c_e1:
-            ed_list = st.date_input("행사 기간", [], help="시작/종료일")
-            et = st.text_input("내용")
-            if st.button("행사 저장", type="secondary"):
-                if et and len(ed_list) > 0:
-                    try:
-                        with st.spinner('저장 중입니다...'):
-                            s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
-                            for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
-                            st.cache_data.clear() 
-                        st.success("저장됨"); st.rerun()
-                    except Exception:
-                        st.error("행사 저장 오류")
-        st.divider()
-        st.write("🗑️ **등록된 행사 목록**")
-        events_df = load_data("company_events")
-        if not events_df.empty:
-            st.dataframe(events_df, use_container_width=True)
-        else: st.info("등록된 행사가 없습니다.")
-
-def render_driver_manage_tab():
-    st.subheader("⚙️ 승무원 및 조(Group) 관리")
-    tab_bulk, tab_change, tab_resign, tab_users = st.tabs(["➕ 승무원 등록", "🔄 조 변경", "👋 퇴사 처리", "🔐 관리자 계정"])
-    with tab_bulk:
-        c1, c2 = st.columns([3, 1])
-        with c1: bulk_names = st.text_area("승무원 성명 목록 (엑셀 붙여넣기)", height=150)
-        with c2: 
-            selected_group = st.selectbox("소속 조", ["1조", "2조", "3조", "4조", "5조", "6조", "7조", "8조", "9조", "10조", "기타"])
-            st.markdown("<br>", unsafe_allow_html=True)
-            start_date = st.date_input("조 배정 시작일", get_kst_now().date())
-            st.markdown('<div class="red-button">', unsafe_allow_html=True)
-            if st.button("등록 실행", type="primary"):
-                if bulk_names:
-                    names = [n.strip() for n in bulk_names.replace(',', '\n').split('\n') if n.strip()]
-                    cnt = 0
-                    for name in names:
-                        if ',' in name or '\t' in name: parts = name.replace('\t', ',').split(','); name = parts[0].strip()
-                        if add_driver_with_group(name, selected_group, start_date.strftime("%Y-%m-%d")): cnt += 1
-                    st.success(f"{cnt}명 등록 완료!"); st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-    with tab_change:
-        st.info("💡 엑셀 등에서 이름을 복사해 붙여넣고, 변경할 조와 날짜를 선택하면 일괄 변경됩니다.")
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            change_names_str = st.text_area("대상 승무원 목록 (엔터로 구분)", height=200, key="change_names_input", placeholder="홍길동\n김철수\n이영희")
-        with c2:
-            target_grp = st.selectbox("이동할 조", ["1조", "2조", "3조", "4조", "5조", "6조", "7조", "8조", "9조", "10조", "기타"], key="new_grp_bulk")
-            st.markdown("<br>", unsafe_allow_html=True)
-            change_date = st.date_input("변경 기준일", get_kst_now().date(), key="eff_date_bulk")
-            st.markdown('<div class="red-button">', unsafe_allow_html=True)
-            if st.button("일괄 변경 적용", type="primary"):
-                if change_names_str:
-                    names_to_change = [n.strip() for n in change_names_str.replace(',', '\n').split('\n') if n.strip()]
-                    all_drivers = load_data("drivers")
-                    all_db_names = all_drivers['name'].astype(str).tolist() if not all_drivers.empty else []
-                    valid_names = []
-                    invalid_names = []
-                    for name in names_to_change:
-                        if name in all_db_names: valid_names.append(name)
-                        else: invalid_names.append(name)
-                    if invalid_names: st.error(f"❌ 다음 이름은 명단에 없어 제외됩니다: {', '.join(invalid_names)}")
-                    if valid_names:
-                        success_cnt = 0
-                        for name in valid_names:
-                            if add_driver_with_group(name, target_grp, change_date.strftime("%Y-%m-%d")): success_cnt += 1
-                        st.success(f"✅ {success_cnt}명의 조를 '{target_grp}'로 변경했습니다.")
-                        if success_cnt > 0: st.balloons()
-                    else: st.warning("변경할 유효한 대상이 없습니다.")
-                else: st.warning("이름을 입력해주세요.")
-            st.markdown('</div>', unsafe_allow_html=True)
-    with tab_resign:
-        drivers = load_data("drivers")
-        if not drivers.empty and 'resigned_date' in drivers.columns:
-            active_drivers = drivers[drivers['resigned_date'] == ""]
-        else:
-            active_drivers = pd.DataFrame()
-        if not active_drivers.empty:
-            st.info("💡 퇴사 처리를 하면 해당 날짜부터 근무 인원 집계 및 달력 표시에서 제외됩니다.")
-            c_r1, c_r2 = st.columns(2)
-            with c_r1: r_target = st.selectbox("퇴사자 선택", active_drivers['name'].tolist(), key="resign_dr")
-            with c_r2: r_date = st.date_input("퇴사 일자", get_kst_now().date(), key="resign_date")
-            st.markdown('<div class="red-button">', unsafe_allow_html=True)
-            if st.button("퇴사 처리 실행", type="primary", key="btn_resign"):
-                set_driver_resignation(r_target, r_date.strftime("%Y-%m-%d"))
-                st.success(f"{r_target}님 퇴사 처리 완료"); st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        else: st.info("등록된 승무원이 없습니다.")
-    with tab_users:
-        st.write("### 🔐 관리자 및 직원 계정 관리")
-        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
-        with c1: new_id = st.text_input("새 아이디")
-        with c2: new_pw = st.text_input("새 비밀번호", type="password")
-        with c3: new_role = st.selectbox("권한", ["admin", "staff"], format_func=lambda x: "관리자" if x == "admin" else "직원")
-        with c3: new_name = st.text_input("사용자 이름")
-        with c4:
-            st.markdown("<br>", unsafe_allow_html=True) 
-            if st.button("계정 생성", type="primary"):
-                if new_id and new_pw and new_name:
-                    if add_user_account(new_id, new_pw, new_role, new_name):
-                        st.success(f"계정 {new_id} 생성 완료"); st.rerun()
-                    else: st.error("이미 존재하는 아이디입니다.")
-                else: st.warning("모든 항목을 입력하세요.")
-        st.divider()
-        st.write("### 🔑 비밀번호 변경")
-        users_df = load_data("users")
-        if not users_df.empty:
-            c_pw1, c_pw2, c_pw3 = st.columns([3, 3, 1])
-            with c_pw1: target_user_pw = st.selectbox("대상 계정 선택", users_df['username'].tolist())
-            with c_pw2: target_new_pw = st.text_input("변경할 비밀번호", type="password", key="chg_pw_input")
-            with c_pw3:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("비밀번호 변경", type="primary"):
-                    if target_new_pw:
-                        if update_user_password(target_user_pw, target_new_pw):
-                            st.success(f"{target_user_pw}님의 비밀번호가 변경되었습니다.")
-                        else: st.error("변경 실패")
-                    else: st.warning("새 비밀번호를 입력하세요.")
-        st.divider()
-        st.write("📋 **등록된 계정 목록**")
-        if not users_df.empty:
-            for idx, row in users_df.iterrows():
-                cc1, cc2, cc3, cc4, cc5 = st.columns([2, 2, 2, 2, 1])
-                with cc1: st.write(f"**{row['username']}**")
-                with cc2: st.write(row['name'])
-                with cc3: st.write("관리자" if row['role']=='admin' else "직원")
-                with cc4: st.write(row['created_at'])
-                with cc5:
-                    if row['username'] != 'admin':
-                        if st.button("삭제", key=f"del_user_{row['username']}"):
-                            delete_user_account(row['username'])
-                            st.success("삭제됨"); st.rerun()
-    st.divider()
-    drivers = load_data("drivers")
-    if not drivers.empty:
-        search_dr = st.text_input("승무원 명부 검색")
-        if search_dr and 'name' in drivers.columns: 
-            drivers = drivers[drivers['name'].str.contains(search_dr)]
-        if 'resigned_date' in drivers.columns:
-            drivers['status'] = drivers['resigned_date'].apply(lambda x: f"퇴사 ({x})" if x else "재직")
-            st.dataframe(drivers[['name', 'group_name', 'status']], hide_index=True, use_container_width=True, height=800)
-        else:
-            st.dataframe(drivers, use_container_width=True)
-        with st.expander("🗑️ 승무원 삭제"):
-            if 'name' in drivers.columns:
-                del_target = st.selectbox("삭제 대상", drivers['name'].tolist(), key="del")
-                if st.button("영구 삭제"): 
-                    delete_driver(del_target)
-                    st.rerun()
-
-def render_individual_calendar_tab():
-    st.subheader("👤 승무원별 월간 근무 현황")
-    inject_custom_css()
-    try:
-        drivers = load_data("drivers")
-        df = load_data("schedules")
-        group_history_df = load_data("group_history")
-    except Exception as e:
-        st.error(f"데이터 로드 중 오류 발생: {e}")
-        return
-    if drivers.empty: 
-        st.warning("승무원을 먼저 등록하세요.")
-        return
-    now = get_kst_now()
-    if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
-    if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
-    c_sel, c_prev, c_date, c_next = st.columns([1.5, 0.5, 1, 0.5])
-    with c_sel: target_name = st.selectbox("승무원 선택", drivers['name'].tolist())
-    with c_prev:
-        if st.button("◀", key="ind_prev", use_container_width=True):
-            if st.session_state.indiv_view_month == 1:
-                st.session_state.indiv_view_year -= 1; st.session_state.indiv_view_month = 12
-            else: st.session_state.indiv_view_month -= 1
-            st.rerun()
-    with c_date: st.markdown(f"<h3 style='text-align:center; margin:0; padding-top:5px;'>{st.session_state.indiv_view_year}년 {st.session_state.indiv_view_month}월</h3>", unsafe_allow_html=True)
-    with c_next:
-        if st.button("▶", key="ind_next", use_container_width=True):
-            if st.session_state.indiv_view_month == 12:
-                st.session_state.indiv_view_year += 1; st.session_state.indiv_view_month = 1
-            else: st.session_state.indiv_view_month += 1
-            st.rerun()
-    target_year = st.session_state.indiv_view_year
-    target_month = st.session_state.indiv_view_month
-    
-    # Dictionary 변환 (개별 화면도 최적화)
-    history_dict = {}
-    if not group_history_df.empty and 'driver_name' in group_history_df.columns:
-        for idx, row in group_history_df.iterrows():
-            d_name = row['driver_name']
-            if d_name not in history_dict: history_dict[d_name] = []
-            history_dict[d_name].append((row['start_date'], row['group_name']))
-        for d_name in history_dict:
-            history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
-
-    if target_name:
-        st.markdown(f"### 🚍 **{target_name}**"); st.divider()
-        filter_ym = f"{target_year}-{target_month:02d}"
-        my_schedules = pd.DataFrame()
-        if not df.empty and 'name' in df.columns and 'date' in df.columns:
-            my_schedules = df[(df['name'] == target_name) & (df['date'].astype(str).str.startswith(filter_ym))]
-        cal = calendar.monthcalendar(target_year, target_month)
-        cols = st.columns(7)
-        for i, w in enumerate(WEEKDAY_KOREAN):
-            cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{w}</div>", unsafe_allow_html=True)
-        for week in cal:
-            cols = st.columns(7)
-            for i, day in enumerate(week):
-                with cols[i]:
-                    if day == 0: st.write("")
-                    else:
-                        d_str = f"{target_year}-{target_month:02d}-{day:02d}"
-                        eff_grp = get_group_from_dict(history_dict, target_name, d_str)
-                        auto = calculate_auto_shift(eff_grp, d_str)
-                        d_sch = pd.DataFrame()
-                        if not my_schedules.empty: d_sch = my_schedules[my_schedules['date'] == d_str]
-                        cell_bg = "transparent"
-                        text_color = "black"
-                        sub_text = ""
-                        if not d_sch.empty:
-                            r = d_sch.iloc[0]
-                            t = r['type']
-                            if t == "휴무": cell_bg = "#ffc9c9"; text_color = "#c92a2a"; sub_text = "휴무"
-                            elif t in ["교육", "경조사", "병가", "휴직"]: cell_bg = "#ffe8cc"; text_color = "#d9480f"; sub_text = t
-                            else: cell_bg = "#f1f3f5"; sub_text = t
-                        elif auto:
-                            if auto == "오전": cell_bg = "#e7f5ff"; text_color = "#1864ab"; sub_text = f"오전 ({eff_grp})"
-                            elif auto == "오후": cell_bg = "#fff4e6"; text_color = "#e67700"; sub_text = f"오후 ({eff_grp})"
-                            elif auto == "휴무": cell_bg = "#f8f9fa"; text_color = "#868e96"; sub_text = f"휴무 ({eff_grp})"
-                        st.markdown(f"""
-                        <div style='background-color:{cell_bg}; border:1px solid #dee2e6; border-radius:5px; padding:5px; min-height:80px; display:flex; flex-direction:column; justify-content:space-between; height:100%;'>
-                            <div style='font-weight:bold; font-size:14px; color:#333;'>{day}</div>
-                            <div style='text-align:center; font-weight:bold; font-size:13px; color:{text_color}; margin-top:5px;'>{sub_text}</div>
-                        </div>""", unsafe_allow_html=True)
-
-def render_view_manage_tab():
-    st.subheader("📊 조회 및 관리")
-    df = load_data("schedules")
-    if df.empty: st.info("데이터 없음"); return
-    if 'date' not in df.columns: st.error("DB 형식 오류: date 컬럼 없음"); return
-    df['display_date'] = df['date']
-    with st.expander("🔎 검색", expanded=True):
-        c1, c2, c3 = st.columns(3)
-        with c1: sn = st.text_input("이름", key="search_name_admin")
-        with c2: sd = st.date_input("기간", [], key="search_date_admin")
-        type_options = ["전체"]
-        if 'type' in df.columns: type_options += list(df['type'].unique())
-        with c3: stp = st.selectbox("종류", type_options, key="search_type_admin")
-    if sn and 'name' in df.columns: df = df[df['name'].str.contains(sn)]
-    if len(sd) == 2: df = df[(df['date'] >= sd[0].strftime("%Y-%m-%d")) & (df['date'] <= sd[1].strftime("%Y-%m-%d"))]
-    if stp != "전체" and 'type' in df.columns: df = df[df['type'] == stp]
-    is_admin = st.session_state.get('auth_status') == 'admin'
-    if is_admin:
-        st.info("⚠️ 데이터 수정/삭제는 구글 시트에서 직접 하시는 것이 가장 빠르고 정확합니다.")
-        st.dataframe(df, use_container_width=True, height=800)
-    else:
-        disp_cols = ['date', 'name', 'type', 'note']
-        valid_cols = [c for c in disp_cols if c in df.columns]
-        st.dataframe(df[valid_cols], use_container_width=True, height=1000)
-
-def render_public_search_tab():
-    render_view_manage_tab() 
-
-def main():
-    st.set_page_config(page_title="우진교통 승무원 휴무 관리", layout="wide")
-    inject_custom_css()
-    if 'auth_status' not in st.session_state: st.session_state['auth_status'] = None
-    if st.session_state['auth_status'] is None:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([1, 1, 1])
-        with c2:
-            st.title("우진교통 승무원 휴무 관리")
-            uid = st.text_input("아이디")
-            upw = st.text_input("비밀번호", type="password")
-            st.markdown('<div class="login-btn">', unsafe_allow_html=True)
-            if st.button("로그인", type="primary", use_container_width=True):
-                user = login_user(uid, upw)
-                if user:
-                    role, name = user
-                    st.session_state['auth_status'] = role
-                    st.session_state['user_name'] = name
-                    st.rerun()
-                else:
-                    st.error("아이디 또는 비밀번호가 잘못되었습니다.")
-            st.markdown('</div>', unsafe_allow_html=True)
-        return
-    c1, c2 = st.columns([8, 1])
-    with c1: st.title(f"우진교통 승무원 휴무 관리 ({st.session_state.get('user_name', '사용자')}님)")
-    with c2: 
-        if st.button("로그아웃"): st.session_state['auth_status'] = None; st.rerun()
-    if st.session_state['auth_status'] == 'admin':
-        t1, t2, t3, t4, t5, t6 = st.tabs(["📅 전체 현황", "👤 개인별", "📝 입력", "⚙️ 승무원", "📊 조회", "🔧 시스템 로그"])
-        with t1: render_calendar_tab()
-        with t2: render_individual_calendar_tab()
-        with t3: render_input_tab()
-        with t4: render_driver_manage_tab()
-        with t5: render_view_manage_tab()
-        with t6: render_log_tab()
-    else:
-        t1, t2, t3 = st.tabs(["📅 전체 현황", "👤 개인별", "📊 조회"])
-        with t1: render_calendar_tab()
-        with t2: render_individual_calendar_tab()
-        with t3: render_public_search_tab()
-
-if __name__ == '__main__':
-    main()
+def render_input_
