@@ -441,7 +441,7 @@ def inject_custom_css():
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
         .event-container::-webkit-scrollbar { display: none; }
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
-        .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1); }
+        .schedule-bar { color: black; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: 1px solid rgba(0,0,0,0.1); border-bottom: 1px solid rgba(0,0,0,0.1); }
         .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
         .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
         .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
@@ -680,6 +680,10 @@ def _render_calendar_tab_unsafe():
             today_schedules = today_schedules.sort_values(by=['sort_rank', 'name'])
             for _, row in today_schedules.iterrows():
                 color = get_type_color(row['type'])
+                
+                # [수정] 징계/기타/경조사 = 흰색, 나머지 = 검은색
+                text_col = "white" if row['type'] in ["징계", "기타", "경조사"] else "black"
+                
                 prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
                 eff_grp = get_group_from_dict(history_dict, row['name'], date_str)
                 orig_shift = calculate_auto_shift(eff_grp, date_str)
@@ -689,12 +693,15 @@ def _render_calendar_tab_unsafe():
                 if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_st:
                     s_info = f"[{row['shift']}] "
                 
-                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                 
-                # [수정] 원래 근무 2번째 줄에 색상으로 표시
+                # [수정] 검정 글씨 배경이면 원근무 색상을 진하게, 흰 글씨 배경이면 밝게
+                c_am = "#A5D8FF" if text_col == "white" else "#1864ab" # 밝은하늘 vs 진한파랑
+                c_pm = "#FFC9C9" if text_col == "white" else "#d9480f" # 연한빨강 vs 진한주황
+                
                 orig_info = ""
-                if orig_shift == "오전": orig_info = "<span style='color:#A5D8FF; font-weight:bold;'>(전)</span> "
-                elif orig_shift == "오후": orig_info = "<span style='color:#FFC9C9; font-weight:bold;'>(후)</span> "
+                if orig_shift == "오전": orig_info = f"<span style='color:{c_am}; font-weight:bold;'>(전)</span> "
+                elif orig_shift == "오후": orig_info = f"<span style='color:{c_pm}; font-weight:bold;'>(후)</span> "
                 
                 i_html = "" 
                 if row['type'] == '휴무':
@@ -705,7 +712,8 @@ def _render_calendar_tab_unsafe():
                     if period_text: n_txt += f" {period_text}"
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{n_txt}</div>"
                 
-                html += f"<div class='schedule-bar bar-single' style='background-color:{color};' title='{p_tip}'>{i_html}</div>"
+                # [수정] color: {text_col} 적용
+                html += f"<div class='schedule-bar bar-single' style='background-color:{color}; color:{text_col};' title='{p_tip}'>{i_html}</div>"
         html += '</div>'
         return html
 
@@ -733,6 +741,10 @@ def _render_calendar_tab_unsafe():
                         violation_marker = "<div style='position:absolute; top:0; left:0; width:6px; height:6px; background-color:red; border-radius:50%; z-index:20;' title='⚠️ 휴식 시간 부족 (전날 오후 -> 금일 오전)'></div>"
                     duration = item['duration']
                     color = get_type_color(row['type'])
+                    
+                    # [수정] 텍스트 색상 결정 (가로모드)
+                    text_col = "white" if row['type'] in ["징계", "기타", "경조사"] else "black"
+                    
                     prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
                     eff_grp = get_group_from_dict(history_dict, row['name'], date_str)
                     orig_shift = calculate_auto_shift(eff_grp, date_str)
@@ -753,12 +765,15 @@ def _render_calendar_tab_unsafe():
                         elif bar_class == "bar-end": border_style += "border-right: 3px solid black;"
                         elif bar_class == "bar-single": border_style = "border: 2px solid black;"
                     else: border_style = "border: none;"
-                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                     
-                    # [수정] 원래 근무 2번째 줄에 색상으로 표시 (가로모드)
+                    # [수정] 원근무 색상 자동 보정
+                    c_am = "#A5D8FF" if text_col == "white" else "#1864ab"
+                    c_pm = "#FFC9C9" if text_col == "white" else "#d9480f"
+                    
                     orig_info = ""
-                    if orig_shift == "오전": orig_info = "<span style='color:#A5D8FF; font-weight:bold;'>(전)</span> "
-                    elif orig_shift == "오후": orig_info = "<span style='color:#FFC9C9; font-weight:bold;'>(후)</span> "
+                    if orig_shift == "오전": orig_info = f"<span style='color:{c_am}; font-weight:bold;'>(전)</span> "
+                    elif orig_shift == "오후": orig_info = f"<span style='color:{c_pm}; font-weight:bold;'>(후)</span> "
 
                     inner_html = ""
                     if row['type'] == '휴무':
@@ -769,7 +784,8 @@ def _render_calendar_tab_unsafe():
                         if period_text: note_text += f" {period_text}"
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{note_text}</div>"
                     
-                    html_content += f"<div class='schedule-bar {bar_class}' style='background-color:{color}; {border_style}; position:relative;' title='{personal_tooltip}'>{violation_marker}{inner_html}</div>"
+                    # [수정] color 적용
+                    html_content += f"<div class='schedule-bar {bar_class}' style='background-color:{color}; color:{text_col}; {border_style}; position:relative;' title='{personal_tooltip}'>{violation_marker}{inner_html}</div>"
                 else: html_content += "<div class='schedule-spacer'></div>"
             html_content += '</div>'
         html_content += '</div>'
