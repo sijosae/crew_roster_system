@@ -262,7 +262,6 @@ def get_driver_group_by_name(name):
         return row.iloc[0]['group_name']
     return None
 
-# [수정] 스타벅스 & 프로페셔널 + 가독성 개선
 def get_type_color(type_name):
     colors = { 
         "휴무": "#00592D",      # 스타벅스 그린
@@ -432,8 +431,6 @@ def inject_custom_css():
     st.markdown("""
     <style>
         .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
-        .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
-        .red-button > button:hover { background-color: #D93A3A !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
         .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
         .calendar-day-box { border-right: 1px solid #e9ecef; border-top: 1px solid #e9ecef; border-bottom: 1px solid #e9ecef; border-left: 0; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
@@ -458,31 +455,20 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 (div.login-btn > div.stButton > button) */
-        div.login-btn div.stButton > button { 
-            background-color: #00592D !important; 
-            color: white !important; 
-            width: 100%; 
-            font-weight: bold; 
-            border-radius: 5px; 
-            padding: 10px; 
-            border: none; 
+        /* [수정] Primary Button 강제 덮어쓰기 (로그인 버튼 등) */
+        button[kind="primary"] {
+            background-color: #00592D !important;
+            border-color: #00592D !important;
+            color: white !important;
         }
-        div.login-btn div.stButton > button:hover { 
-            background-color: #004d26 !important; 
-            color: white !important; 
-            border: none !important;
+        button[kind="primary"]:hover {
+            background-color: #004d26 !important;
+            border-color: #004d26 !important;
+            color: white !important;
         }
-        div.login-btn div.stButton > button:focus { 
-            background-color: #00592D !important; 
-            color: white !important; 
-            border: none !important;
-            box-shadow: none !important;
-        }
-        div.login-btn div.stButton > button:active { 
-            background-color: #004d26 !important; 
-            color: white !important; 
-            border: none !important;
+        button[kind="primary"]:focus {
+            box-shadow: 0 0 0 0.2rem rgba(0, 89, 45, 0.5) !important;
+            outline: none !important;
         }
         
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
