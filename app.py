@@ -262,18 +262,18 @@ def get_driver_group_by_name(name):
         return row.iloc[0]['group_name']
     return None
 
-# [수정] 스타벅스 & 프로페셔널 딥 컬러 테마
+# [수정] 스타벅스 & 프로페셔널 + 가독성 개선
 def get_type_color(type_name):
     colors = { 
         "휴무": "#00592D",      # 스타벅스 그린
-        "교육": "#C6A87C",      # 라떼/골드 계열
+        "교육": "#8c6b4a",      # [수정] 딥 로스트 브라운 (흰글씨 잘보임)
         "경조사": "#1F3994",    # 딥 네이비
-        "징계": "#363636",      # 차콜 그레이
+        "징계": "#000000",      # [수정] 완전 검정
         "당일 해지": "#8B0000", # 다크 레드
         "병가": "#A52A2A",      # 브라운 레드
         "휴직": "#D2691E",      # 초콜릿
         "육아휴직": "#D2691E", 
-        "기타": "#595959"       # 딤 그레이
+        "기타": "#363636"       # [수정] 차콜 그레이
     }
     return colors.get(type_name, "#546E7A")
 
@@ -458,8 +458,8 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [수정] 로그인 버튼 - 스타벅스 그린 적용 (강력한 선택자 사용) */
-        .login-btn .stButton > button { 
+        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 (div.login-btn > div.stButton > button) */
+        div.login-btn div.stButton > button { 
             background-color: #00592D !important; 
             color: white !important; 
             width: 100%; 
@@ -468,9 +468,21 @@ def inject_custom_css():
             padding: 10px; 
             border: none; 
         }
-        .login-btn .stButton > button:hover { 
+        div.login-btn div.stButton > button:hover { 
             background-color: #004d26 !important; 
             color: white !important; 
+            border: none !important;
+        }
+        div.login-btn div.stButton > button:focus { 
+            background-color: #00592D !important; 
+            color: white !important; 
+            border: none !important;
+            box-shadow: none !important;
+        }
+        div.login-btn div.stButton > button:active { 
+            background-color: #004d26 !important; 
+            color: white !important; 
+            border: none !important;
         }
         
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
