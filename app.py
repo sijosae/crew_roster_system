@@ -10,7 +10,7 @@ import time
 import traceback
 
 # ==========================================
-# 0. 로그 및 초기화 (에러 박제 기능 추가)
+# 0. 로그 및 초기화
 # ==========================================
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
@@ -18,17 +18,13 @@ def get_kst_now():
 if 'system_logs' not in st.session_state:
     st.session_state['system_logs'] = []
 
-# [추가] 에러를 메인 화면에 고정하기 위한 변수
-if 'last_error_msg' not in st.session_state:
-    st.session_state['last_error_msg'] = None
-
 def add_log(msg, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     icon = "✅" if level == "INFO" else "🚨"
     st.session_state['system_logs'].insert(0, f"[{timestamp}] {icon} {msg}")
 
 # ==========================================
-# 1. DB 연결
+# 1. DB 연결 (영구 캐싱)
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -70,7 +66,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 2. 인증
+# 2. 인증 및 계정
 # ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
@@ -117,7 +113,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 3. 데이터 저장
+# 3. 데이터 저장 (가장 빠른 버전)
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -162,6 +158,7 @@ def delete_driver(driver_name):
     except: pass
     clear_cache_after_save()
 
+# [저장] 쓰기 전용 함수 (1개 값 반환)
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
@@ -424,34 +421,29 @@ def show_input_dialog():
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
         
-        # [수정] 성공 시에만 팝업 종료하고 안내, 실패시 멈춤
+        # [수정] 성공 시 토스트 띄우고 즉시 새로고침, 실패 시 정지
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
-                # 안전장치: 전체를 try-except로 감쌈
                 try:
                     with st.spinner('저장 중입니다...'):
-                        save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                        # save_range_batch 함수가 1개의 값(count)만 반환하도록 맞춰져 있음
+                        count = save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
                     
-                    # 성공하면 에러 메시지 초기화
-                    st.session_state['last_error_msg'] = None
-                    st.success("✅ 저장이 완료되었습니다! 창을 닫아주세요.")
+                    # 성공 시 Toast 메시지 (Rerun 되어도 사라지지 않음)
+                    st.toast("✅ 저장 완료! 잠시 후 갱신됩니다.", icon="🔄")
                     add_log(f"입력 성공: {len(lst)}명, {rng[0]}~{rng[-1]}, {typ}")
                     
-                    # 자동 새로고침 없이, 사용자가 직접 닫게 유도 (가장 안전함)
-                    # 만약 닫고 싶다면 아래 주석을 푸세요
-                    # time.sleep(1)
-                    # st.rerun() 
+                    # 0.5초만 짧게 대기 후 즉시 리로딩 (자동 새로고침)
+                    time.sleep(0.5)
+                    st.rerun()
                     
                 except Exception as e:
-                    # 실패하면 에러를 세션에 저장 (팝업 꺼져도 보이게)
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
-                    st.session_state['last_error_msg'] = error_msg # 메인화면에 박제
                     add_log(error_msg, "ERROR")
-                    
-                    st.error("🚨 저장 중 오류가 발생했습니다! (멈춤)")
-                    st.text_area("에러 상세", error_msg, height=200)
-                    st.stop() # 여기서 멈춤
+                    st.error("🚨 저장 중 오류 발생!")
+                    st.text_area("에러 상세 (복사 가능)", error_msg, height=200)
+                    st.stop() # 에러 발생 시 여기서 멈춰서 팝업 유지
             else:
                 st.warning("이름과 기간을 입력해주세요.")
 
@@ -466,11 +458,13 @@ def show_input_dialog():
                         s_d, e_d = ed_list[0], ed_list[1] if len(ed_list)>1 else ed_list[0]
                         for d in pd.date_range(s_d, e_d): add_company_event(d.strftime("%Y-%m-%d"), et)
                         st.cache_data.clear()
-                    st.session_state['last_error_msg'] = None
-                    st.success("✅ 행사가 저장되었습니다! 창을 닫아주세요.")
+                    
+                    st.toast("✅ 행사 저장 완료!", icon="🔄")
+                    time.sleep(0.5)
+                    st.rerun()
+                    
                 except Exception as e:
                     error_msg = f"{str(e)}\n{traceback.format_exc()}"
-                    st.session_state['last_error_msg'] = error_msg
                     add_log(f"행사 저장 실패: {str(e)}", "ERROR")
                     st.error("오류 발생")
                     st.text_area("에러 상세", error_msg, height=200)
@@ -481,9 +475,7 @@ def render_log_tab():
     st.subheader("🔧 시스템 로그 (관리자 전용)")
     if st.button("🗑️ 로그 비우기"):
         st.session_state['system_logs'] = []
-        st.session_state['last_error_msg'] = None # 에러 메시지도 초기화
         st.rerun()
-    
     if st.session_state['system_logs']:
         log_text = "\n".join(st.session_state['system_logs'])
         st.text_area("로그 내역", log_text, height=400)
@@ -492,14 +484,6 @@ def render_log_tab():
 
 # [중요] 렌더링 에러 방지용 Wrapper 함수
 def render_calendar_tab():
-    # 만약 저장 중 에러가 있었다면 최상단에 표시 (팝업 꺼져도 보임)
-    if st.session_state.get('last_error_msg'):
-        st.error("🚨 방금 전 저장 중 오류가 발생했습니다!")
-        st.code(st.session_state['last_error_msg'])
-        if st.button("에러 메시지 닫기"):
-            st.session_state['last_error_msg'] = None
-            st.rerun()
-            
     try:
         _render_calendar_tab_unsafe()
     except Exception:
