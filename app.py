@@ -10,17 +10,19 @@ import time
 import traceback
 
 # ==========================================
-# 0. 로그 및 초기화 (실행 취소 기능 탑재)
+# 0. 로그 및 초기화
 # ==========================================
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# 로그를 딕셔너리 형태로 저장 (메시지 + 삭제할 ID 리스트)
-if 'action_logs' not in st.session_state:
-    st.session_state['action_logs'] = []
+if 'system_logs' not in st.session_state:
+    st.session_state['system_logs'] = []
 
 if 'last_error_msg' not in st.session_state:
     st.session_state['last_error_msg'] = None
+
+if 'action_logs' not in st.session_state:
+    st.session_state['action_logs'] = []
 
 def add_log(msg, ids=None, sheet_name=None, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -30,7 +32,7 @@ def add_log(msg, ids=None, sheet_name=None, level="INFO"):
         "level": level,
         "ids": ids if ids else [],
         "sheet": sheet_name,
-        "status": "active" # 취소되면 canceled로 변경
+        "status": "active"
     }
     st.session_state['action_logs'].insert(0, log_entry)
 
@@ -80,33 +82,19 @@ def clear_cache_after_save():
 # 2. 실행 취소 (Undo) 로직
 # ==========================================
 def delete_rows_by_ids(sheet_name, id_list):
-    """지정된 ID를 가진 행을 찾아서 삭제하는 함수"""
     if not id_list: return False
-    
     sh = get_db_connection()
     ws = sh.worksheet(sheet_name)
-    
-    # 모든 데이터 가져오기 (1열이 ID라고 가정)
     col_values = ws.col_values(1) 
-    
-    # 삭제할 행 번호 찾기 (뒤에서부터 지워야 인덱스가 안 꼬임)
     rows_to_delete = []
     for target_id in id_list:
         try:
-            # 리스트에서 ID 위치 찾기 (헤더 제외 인덱스 보정 필요할 수 있음)
-            # col_values는 1부터 시작하는 행 번호와 매칭됨
-            # 값이 여러개일 수 있으니 주의. 여기서는 ID가 유니크하다고 가정.
             row_idx = col_values.index(target_id) + 1
             rows_to_delete.append(row_idx)
-        except ValueError:
-            continue # 이미 지워졌거나 없으면 패스
-            
-    # 내림차순 정렬 (아래쪽 행부터 지워야 함)
+        except ValueError: continue
     rows_to_delete.sort(reverse=True)
-    
     for r_idx in rows_to_delete:
         ws.delete_rows(r_idx)
-        
     clear_cache_after_save()
     return True
 
@@ -210,15 +198,13 @@ def save_range_batch(name_list, start, end, type, shift, note):
     base_id = now_kst.strftime("%y%m%d%H%M") 
     
     rows_to_add = []
-    generated_ids = [] # Undo를 위해 생성된 ID 추적
+    generated_ids = [] 
     count = 0
-    
     for name in name_list:
         for d in dates:
             d_str = d.strftime("%Y-%m-%d")
             row_id = f"{base_id}{count:02d}"
             generated_ids.append(row_id)
-            
             rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
             count += 1
             
@@ -236,7 +222,6 @@ def add_company_event(date, title):
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d")
     row_id = now_kst.strftime("%y%m%d%H%M%S")
-    
     ws.append_row([row_id, date, title, created_at])
     clear_cache_after_save()
     return row_id
@@ -404,7 +389,6 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
         if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: 
             start_date -= timedelta(days=1)
         else: break
-    
     while True:
         next_d = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
         if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: 
@@ -422,7 +406,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 6. 화면 렌더링 (CSS, 탭)
+# 6. 화면 렌더링
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -478,13 +462,9 @@ def show_input_dialog():
                     with st.spinner('저장 중입니다...'):
                         count, ids = save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
                     
-                    # [변경] 상단에 큰 성공 박스 표시 (0.7초 동안 유지)
-                    st.success(f"✅ 저장 완료! (총 {count}건)")
-                    
-                    # 로그 기록 (누가, 언제, 무엇을, ID)
-                    log_msg = f"{', '.join(lst)} ({rng[0]}~{rng[-1]}, {typ})"
-                    add_log(log_msg, ids=ids, sheet_name="schedules")
-                    
+                    st.toast("✅ 저장 완료! 잠시 후 갱신됩니다.", icon="🔄")
+                    # 상세 로그 추가
+                    add_log(f"입력 성공: {len(lst)}명 ({', '.join(lst)}), {rng[0]}~{rng[-1]}, {typ}", ids=ids, sheet_name="schedules")
                     time.sleep(0.7)
                     st.rerun()
                     
@@ -510,10 +490,8 @@ def show_input_dialog():
                              row_id = add_company_event(d.strftime("%Y-%m-%d"), et)
                         st.cache_data.clear()
                     
-                    st.success("✅ 행사 저장 완료!")
-                    # 행사 로그는 간단하게 처리 (삭제 구현을 위해 ID 리스트가 필요하다면 여기서도 수집해야 함)
+                    st.toast("✅ 행사 저장 완료!", icon="🔄")
                     add_log(f"행사 등록: {et} ({s_d}~{e_d})", sheet_name="company_events")
-                    
                     time.sleep(0.7)
                     st.rerun()
                     
@@ -541,7 +519,6 @@ def render_log_tab():
             with c1: st.write(log['time'])
             with c2: st.write(f"{'✅' if log['level']=='INFO' else '🚨'} {log['msg']}")
             with c3:
-                # 활성 상태이고, ID가 있는 경우에만 취소 버튼 표시
                 if log['status'] == 'active' and log.get('ids') and log.get('sheet'):
                     if st.button("↩️ 실행 취소", key=f"undo_{i}"):
                         with st.spinner("삭제 중..."):
@@ -701,6 +678,9 @@ def _render_calendar_tab_unsafe():
                 if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_st:
                     s_info = f"[{row['shift']}] "
                 name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                
+                # [안전장치 적용] 변수 초기화
+                i_html = "" 
                 if row['type'] == '휴무':
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
                     if period_text: i_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
@@ -708,6 +688,7 @@ def _render_calendar_tab_unsafe():
                     n_txt = row['note'] if row['note'] else row['type']
                     if period_text: n_txt += f" {period_text}"
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{n_txt}</div>"
+                
                 html += f"<div class='schedule-bar bar-single' style='background-color:{color};' title='{p_tip}'>{i_html}</div>"
         html += '</div>'
         return html
@@ -757,13 +738,17 @@ def _render_calendar_tab_unsafe():
                         elif bar_class == "bar-single": border_style = "border: 2px solid black;"
                     else: border_style = "border: none;"
                     name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                    
+                    # [안전장치 적용] 변수 초기화
+                    inner_html = ""
                     if row['type'] == '휴무':
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
-                        if period_text: i_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
+                        if period_text: inner_html += f"<div style='font-size:9px; opacity:0.9;'>{period_text}</div>"
                     else:
                         note_text = row['note'] if row['note'] else row['type']
                         if period_text: note_text += f" {period_text}"
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{note_text}</div>"
+                    
                     html_content += f"<div class='schedule-bar {bar_class}' style='background-color:{color}; {border_style}; position:relative;' title='{personal_tooltip}'>{violation_marker}{inner_html}</div>"
                 else: html_content += "<div class='schedule-spacer'></div>"
             html_content += '</div>'
