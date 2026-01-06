@@ -280,31 +280,21 @@ kr_holidays = holidays.KR()
 def is_holiday(date_obj):
     return date_obj in kr_holidays
 
-# [수정] HTML 코드를 한 줄로 병합하여 raw text 출력 문제 해결
 def get_daily_shift_summary(date_str):
     am, pm = [], []
     off_from_am, off_from_pm = [], []
-    
     prev_date = (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
-    
     for i in range(1, 11):
         grp_name = f"{i}조"
         s = calculate_auto_shift(grp_name, date_str)
-        
-        if s == "오전":
-            am.append(str(i))
-        elif s == "오후":
-            pm.append(str(i))
+        if s == "오전": am.append(str(i))
+        elif s == "오후": pm.append(str(i))
         else:
             prev_s = calculate_auto_shift(grp_name, prev_date)
-            if prev_s == "오전":
-                off_from_am.append(str(i)) 
-            else:
-                off_from_pm.append(str(i))
-        
+            if prev_s == "오전": off_from_am.append(str(i)) 
+            else: off_from_pm.append(str(i))
     line1 = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:1px;'><span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span><span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_am)}</span></div>"
     line2 = f"<div style='display:flex; justify-content:space-between; align-items:center;'><span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span><span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_pm)}</span></div>"
-    
     return line1 + line2
 
 @st.cache_data(ttl=600)
@@ -698,9 +688,12 @@ def _render_calendar_tab_unsafe():
                 hide_st = ["병가", "육아휴직", "휴직", "당일 해지"]
                 if st.session_state.get('auth_status') == 'admin' and row['shift'] and row['shift'] not in ['휴무', '기타', '자동'] and row['type'] not in hide_st:
                     s_info = f"[{row['shift']}] "
-                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                 
-                # [안전장치 적용] 변수 초기화
+                # [추가] 원래 근무 표시 (이름 옆에 작게)
+                orig_mark = f"<span style='font-size:0.8em; color:#ddd; margin-left:2px;'>({orig_shift[0] if orig_shift else ''})</span>" if orig_shift else ""
+                
+                name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}{orig_mark}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                
                 i_html = "" 
                 if row['type'] == '휴무':
                     i_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
@@ -758,9 +751,12 @@ def _render_calendar_tab_unsafe():
                         elif bar_class == "bar-end": border_style += "border-right: 3px solid black;"
                         elif bar_class == "bar-single": border_style = "border: 2px solid black;"
                     else: border_style = "border: none;"
-                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center;">{s_info}{row['name']}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
                     
-                    # [안전장치 적용] 변수 초기화
+                    # [추가] 원래 근무 표시 (가로 모드)
+                    orig_mark = f"<span style='font-size:0.8em; color:#ddd; margin-left:2px;'>({orig_shift[0] if orig_shift else ''})</span>" if orig_shift else ""
+
+                    name_line = f"""<div style="display:flex; align-items:center; justify-content:center;"><div style="width:12px; text-align:left;">{prefix}</div><div style="flex:1; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_info}{row['name']}{orig_mark}</div><div style="width:12px; text-align:right;">{suffix}</div></div>"""
+                    
                     inner_html = ""
                     if row['type'] == '휴무':
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div>"
@@ -1057,6 +1053,26 @@ def render_view_manage_tab():
     if df.empty: st.info("데이터 없음"); return
     if 'date' not in df.columns: st.error("DB 형식 오류: date 컬럼 없음"); return
     df['display_date'] = df['date']
+    
+    # [추가] 원래 근무 정보 계산
+    group_history_df = load_data("group_history")
+    history_dict = {}
+    if not group_history_df.empty and 'driver_name' in group_history_df.columns:
+        for idx, row in group_history_df.iterrows():
+            d_name = row['driver_name']
+            if d_name not in history_dict: history_dict[d_name] = []
+            history_dict[d_name].append((row['start_date'], row['group_name']))
+        for d_name in history_dict:
+            history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
+            
+    def get_orig(row):
+        grp = get_group_from_dict(history_dict, row['name'], row['date'])
+        if grp:
+            return calculate_auto_shift(grp, row['date'])
+        return ""
+    
+    df['original_shift'] = df.apply(get_orig, axis=1)
+
     with st.expander("🔎 검색", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1: sn = st.text_input("이름", key="search_name_admin")
@@ -1068,13 +1084,20 @@ def render_view_manage_tab():
     if len(sd) == 2: df = df[(df['date'] >= sd[0].strftime("%Y-%m-%d")) & (df['date'] <= sd[1].strftime("%Y-%m-%d"))]
     if stp != "전체" and 'type' in df.columns: df = df[df['type'] == stp]
     is_admin = st.session_state.get('auth_status') == 'admin'
+    
+    # 컬럼 순서 및 이름 정리
+    display_cols = ['date', 'name', 'type', 'shift', 'original_shift', 'note', 'created_at']
+    valid_cols = [c for c in display_cols if c in df.columns]
+    
+    # 보기 좋게 이름 변경 (선택사항)
+    final_df = df[valid_cols].copy()
+    final_df.columns = [c.replace('date', '날짜').replace('name', '이름').replace('type', '구분').replace('shift', '실제근무').replace('original_shift', '원래근무').replace('note', '비고').replace('created_at', '생성일') for c in final_df.columns]
+
     if is_admin:
         st.info("⚠️ 데이터 수정/삭제는 구글 시트에서 직접 하시는 것이 가장 빠르고 정확합니다.")
-        st.dataframe(df, use_container_width=True, height=800)
+        st.dataframe(final_df, use_container_width=True, height=800)
     else:
-        disp_cols = ['date', 'name', 'type', 'note']
-        valid_cols = [c for c in disp_cols if c in df.columns]
-        st.dataframe(df[valid_cols], use_container_width=True, height=1000)
+        st.dataframe(final_df, use_container_width=True, height=1000)
 
 def render_public_search_tab():
     render_view_manage_tab() 
