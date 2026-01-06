@@ -146,7 +146,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 4. 데이터 저장 (ID 리스트 반환)
+# 4. 데이터 저장
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -346,7 +346,22 @@ def calculate_layout_rows(df_month):
     return layout_map, max_row
 
 def get_stats_optimized(date_str, all_drivers_df, today_schedules_df, history_dict):
-    total = len(all_drivers_df)
+    # [수정] 퇴사일 확인하여 해당 날짜에 근무하는 실제 인원만 추림
+    active_drivers_list = []
+    
+    if not all_drivers_df.empty:
+        has_resign_col = 'resigned_date' in all_drivers_df.columns
+        for _, dr in all_drivers_df.iterrows():
+            is_active = True
+            if has_resign_col:
+                r_date = str(dr['resigned_date']).strip()
+                # 퇴사일이 존재하고, 조회하려는 날짜가 퇴사일보다 미래라면 제외
+                if r_date and date_str > r_date:
+                    is_active = False
+            if is_active:
+                active_drivers_list.append(dr['name'])
+    
+    total = len(active_drivers_list)
     am_cnt, pm_cnt, off_cnt = 0, 0, 0
     
     if not today_schedules_df.empty and 'shift' not in today_schedules_df.columns:
@@ -357,9 +372,7 @@ def get_stats_optimized(date_str, all_drivers_df, today_schedules_df, history_di
         for _, row in today_schedules_df.iterrows():
             manual_map[row['name']] = (row['type'], row.get('shift', '자동'))
     
-    drivers_list = all_drivers_df['name'].tolist() if not all_drivers_df.empty else []
-    
-    for name in drivers_list:
+    for name in active_drivers_list:
         final_shift = None
         if name in manual_map:
             typ, sft = manual_map[name]
@@ -389,6 +402,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
         if (p_name, prev_d) in full_schedule_map and full_schedule_map[(p_name, prev_d)] == p_type: 
             start_date -= timedelta(days=1)
         else: break
+    
     while True:
         next_d = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
         if (p_name, next_d) in full_schedule_map and full_schedule_map[(p_name, next_d)] == p_type: 
@@ -463,7 +477,6 @@ def show_input_dialog():
                         count, ids = save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
                     
                     st.toast("✅ 저장 완료! 잠시 후 갱신됩니다.", icon="🔄")
-                    # 상세 로그 추가
                     add_log(f"입력 성공: {len(lst)}명 ({', '.join(lst)}), {rng[0]}~{rng[-1]}, {typ}", ids=ids, sheet_name="schedules")
                     time.sleep(0.7)
                     st.rerun()
@@ -537,7 +550,6 @@ def render_log_tab():
     else:
         st.caption("아직 기록된 로그가 없습니다.")
 
-# [중요] 렌더링 에러 방지용 Wrapper 함수
 def render_calendar_tab():
     if st.session_state.get('last_error_msg'):
         st.error("🚨 방금 전 저장 중 오류가 발생했습니다!")
