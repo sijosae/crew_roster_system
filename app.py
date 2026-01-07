@@ -255,7 +255,6 @@ def clean_driver_name(name):
     if not name: return ""
     return re.sub(r'\(.*?\)', '', str(name)).strip()
 
-# [수정] 용어 변경 (Gamcha -> Reduction)
 def get_reduction_rules():
     df = load_data("reduction_rules")
     rules = []
@@ -270,7 +269,6 @@ def get_reduction_rules():
             })
     return rules
 
-# [수정] 용어 변경 (Gamcha -> Reduction)
 def is_reduction_target(date_str, route, seq, rules):
     try:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -315,19 +313,17 @@ def parse_roster_excel(file):
                 curr_idx = start_row + r_offset
                 if curr_idx >= len(df_raw): break
                 
-                # 노선 번호 Fill-down
                 raw_route = df_raw.iloc[curr_idx, side['route']]
                 if pd.notnull(raw_route) and str(raw_route).strip() != "":
                     last_route = str(raw_route).strip()
                 current_route = last_route if last_route else ""
 
-                # 순번, 차량번호 체크
                 raw_seq = df_raw.iloc[curr_idx, side['seq']]
                 raw_car = df_raw.iloc[curr_idx, side['car']]
                 
                 current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                 
-                # [수정] 차량번호 범위 확장 (5001 ~ 5300)
+                # [수정] 차량번호 5001~5300
                 try:
                     car_num = int(str(raw_car).strip())
                     is_valid_car = (5001 <= car_num <= 5300)
@@ -336,7 +332,6 @@ def parse_roster_excel(file):
                     is_valid_car = False
                     current_car = ""
 
-                # 엄격한 데이터 유효성 검사 (노선+순번+차량 모두 필수)
                 if not (current_route and current_seq and is_valid_car):
                     continue
                 
@@ -387,7 +382,6 @@ def save_work_history(df_history):
         return len(rows)
     return 0
 
-# [수정] 용어 변경 (Gamcha -> Reduction)
 def add_reduction_rule(start, end, route, seq, cond):
     sh = get_db_connection()
     try:
@@ -427,7 +421,6 @@ def get_type_color(type_name):
         "휴무": "#00592D", "교육": "#8c6b4a", "경조사": "#1F3994", 
         "징계": "#000000", "당일 해지": "#8B0000", "병가": "#A52A2A", 
         "휴직": "#D2691E", "육아휴직": "#D2691E", "기타": "#363636",
-        # [신규] 실제 근무용 색상
         "실제근무_본인": "#1e88e5", # 파랑
         "실제근무_대운": "#8e24aa"  # 보라
     }
@@ -594,7 +587,7 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 (Important + Specificity) */
+        /* [수정] 로그인 버튼 색상 강제 */
         button[kind="primary"], div.stButton > button, div[data-testid="stFormSubmitButton"] > button {
             background-color: #00592D !important;
             border-color: #00592D !important;
@@ -621,6 +614,7 @@ def show_input_dialog():
         with c1: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
+        
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
@@ -765,12 +759,14 @@ def _render_calendar_tab_unsafe():
                 if orig == '오전': orig_mk = "<span style='color:#87CEEB; font-weight:bold;'>(전)</span> "
                 elif orig == '오후': orig_mk = "<span style='color:#FFB6C1; font-weight:bold;'>(후)</span> "
                 
+                # [수정] 절대 위치를 사용한 이름 중앙 정렬 (아이콘 영향 받지 않음)
                 inner = f"""<div style="position:relative; width:100%; display:flex; justify-content:center; align-items:center;">
                     <div style="position:absolute; left:2px;">{pre}</div>
                     <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; padding:0 14px;">{row['name']}</div>
                     <div style="position:absolute; right:2px;">{suf}</div></div>"""
                 
                 n_txt = row['note'] if row['note'] else row['type']
+                # [수정] period_text(기간표시) 복구
                 if period_text: n_txt += f" {period_text}"
                 
                 sub_txt = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
@@ -803,6 +799,7 @@ def _render_calendar_tab_unsafe():
                         <div style="position:absolute; right:2px;">{suf}</div></div>"""
                     
                     n_txt = row['note'] if row['note'] else row['type']
+                    # [수정] period_text(기간표시) 복구
                     if period_text: n_txt += f" {period_text}"
                     
                     sub = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
