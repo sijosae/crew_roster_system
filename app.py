@@ -37,6 +37,24 @@ def add_log(msg, ids=None, sheet_name=None, level="INFO"):
     }
     st.session_state['action_logs'].insert(0, log_entry)
 
+# [추가] 접속 로그 저장 함수 (서버 부하 최소화: 로그인 시 1회만 호출)
+def log_login_access(username, name):
+    try:
+        sh = get_db_connection()
+        try:
+            ws = sh.worksheet("access_logs")
+        except gspread.exceptions.WorksheetNotFound:
+            # 시트가 없으면 생성 (헤더 포함)
+            ws = sh.add_worksheet(title="access_logs", rows=1000, cols=4)
+            ws.append_row(["timestamp", "username", "name", "status"])
+        
+        timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+        ws.append_row([timestamp, username, name, "Login Success"])
+        # 캐시 갱신 (로그 탭에서 바로 확인 가능하도록)
+        st.cache_data.clear()
+    except Exception as e:
+        print(f"로그 저장 실패: {e}") # 사용자 경험을 위해 에러는 콘솔에만 출력하고 넘어감
+
 # ==========================================
 # 1. DB 연결 (영구 캐싱)
 # ==========================================
@@ -262,6 +280,7 @@ def get_driver_group_by_name(name):
         return row.iloc[0]['group_name']
     return None
 
+# [수정] 스타벅스 & 프로페셔널 딥 컬러 테마
 def get_type_color(type_name):
     colors = { 
         "휴무": "#00592D",      # 스타벅스 그린
@@ -431,8 +450,6 @@ def inject_custom_css():
     st.markdown("""
     <style>
         .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
-        .red-button > button { background-color: #FF4B4B !important; color: white !important; font-weight: bold !important; }
-        .red-button > button:hover { background-color: #D93A3A !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
         .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
         .calendar-day-box { border-right: 1px solid #e9ecef; border-top: 1px solid #e9ecef; border-bottom: 1px solid #e9ecef; border-left: 0; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
@@ -449,6 +466,7 @@ def inject_custom_css():
         .event-container::-webkit-scrollbar { display: none; }
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
         
+        /* [수정] 테두리 3px 진한 검정 회색 (#222) 적용 */
         .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: none; border-bottom: none; }
         .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
         .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
@@ -456,7 +474,7 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [로그인 버튼 - 스타벅스 그린 강제 적용] */
+        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 */
         button[kind="primary"] {
             background-color: #00592D !important;
             border-color: #00592D !important;
@@ -541,35 +559,52 @@ def render_log_tab():
     st.subheader("🔧 시스템 로그 및 실행 취소")
     st.info("💡 최근 작업 내역을 확인하고 [실행 취소] 할 수 있습니다. (데이터베이스에서 즉시 삭제됨)")
     
-    if st.button("🗑️ 로그 전체 비우기 (화면에서만 삭제)"):
-        st.session_state['action_logs'] = []
-        st.rerun()
+    # [추가] 탭 분리: 작업 로그 / 접속 이력
+    t_act, t_acc = st.tabs(["📋 작업 로그", "👥 접속 이력"])
     
-    st.divider()
-    
-    if st.session_state['action_logs']:
-        for i, log in enumerate(st.session_state['action_logs']):
-            c1, c2, c3 = st.columns([1, 4, 1])
-            with c1: st.write(log['time'])
-            with c2: st.write(f"{'✅' if log['level']=='INFO' else '🚨'} {log['msg']}")
-            with c3:
-                if log['status'] == 'active' and log.get('ids') and log.get('sheet'):
-                    if st.button("↩️ 실행 취소", key=f"undo_{i}"):
-                        with st.spinner("삭제 중..."):
-                            success = delete_rows_by_ids(log['sheet'], log['ids'])
-                            if success:
-                                log['status'] = 'canceled'
-                                log['msg'] += " (취소됨)"
-                                st.success("실행 취소 완료!")
-                                time.sleep(1)
-                                st.rerun()
-                            else:
-                                st.error("삭제 실패 (이미 삭제되었을 수 있음)")
-                elif log['status'] == 'canceled':
-                    st.caption("취소됨")
-            st.divider()
-    else:
-        st.caption("아직 기록된 로그가 없습니다.")
+    with t_act:
+        if st.button("🗑️ 로그 전체 비우기 (화면에서만 삭제)"):
+            st.session_state['action_logs'] = []
+            st.rerun()
+        
+        st.divider()
+        
+        if st.session_state['action_logs']:
+            for i, log in enumerate(st.session_state['action_logs']):
+                c1, c2, c3 = st.columns([1, 4, 1])
+                with c1: st.write(log['time'])
+                with c2: st.write(f"{'✅' if log['level']=='INFO' else '🚨'} {log['msg']}")
+                with c3:
+                    if log['status'] == 'active' and log.get('ids') and log.get('sheet'):
+                        if st.button("↩️ 실행 취소", key=f"undo_{i}"):
+                            with st.spinner("삭제 중..."):
+                                success = delete_rows_by_ids(log['sheet'], log['ids'])
+                                if success:
+                                    log['status'] = 'canceled'
+                                    log['msg'] += " (취소됨)"
+                                    st.success("실행 취소 완료!")
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("삭제 실패 (이미 삭제되었을 수 있음)")
+                    elif log['status'] == 'canceled':
+                        st.caption("취소됨")
+                st.divider()
+        else:
+            st.caption("아직 기록된 로그가 없습니다.")
+            
+    with t_acc:
+        try:
+            df_acc = load_data("access_logs")
+            if not df_acc.empty:
+                # 최신순 정렬 (timestamp 기준 내림차순)
+                if 'timestamp' in df_acc.columns:
+                    df_acc = df_acc.sort_values(by='timestamp', ascending=False)
+                st.dataframe(df_acc, use_container_width=True)
+            else:
+                st.info("접속 기록이 없습니다.")
+        except:
+            st.warning("접속 로그 시트를 불러올 수 없습니다.")
 
 # [중요] 렌더링 에러 방지용 Wrapper 함수
 def render_calendar_tab():
@@ -713,6 +748,8 @@ def _render_calendar_tab_unsafe():
             today_schedules = today_schedules.sort_values(by=['sort_rank', 'name'])
             for _, row in today_schedules.iterrows():
                 color = get_type_color(row['type'])
+                
+                # [수정] 글씨색은 모두 흰색(White)로 통일 (진한 배경)
                 text_col = "white"
                 
                 prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
@@ -735,8 +772,10 @@ def _render_calendar_tab_unsafe():
                 </div>
                 """
                 
-                c_am = "#87CEEB" 
-                c_pm = "#FFB6C1"
+                # [수정] 원근무 표시 색상 (어두운 배경 위에서 잘 보이도록 형광/파스텔톤 사용)
+                c_am = "#87CEEB" # 형광 하늘색 (SkyBlue)
+                c_pm = "#FFB6C1" # 형광 분홍색 (LightPink)
+                
                 orig_info = ""
                 if orig_shift == "오전": orig_info = f"<span style='color:{c_am}; font-weight:bold;'>(전)</span> "
                 elif orig_shift == "오후": orig_info = f"<span style='color:{c_pm}; font-weight:bold;'>(후)</span> "
@@ -779,6 +818,8 @@ def _render_calendar_tab_unsafe():
                         violation_marker = "<div style='position:absolute; top:0; left:0; width:6px; height:6px; background-color:red; border-radius:50%; z-index:20;' title='⚠️ 휴식 시간 부족 (전날 오후 -> 금일 오전)'></div>"
                     duration = item['duration']
                     color = get_type_color(row['type'])
+                    
+                    # [수정] 글씨색 화이트
                     text_col = "white"
                     
                     prefix, suffix, period_text = get_streak_info(full_schedule_map, row['name'], date_str, row['type'])
@@ -814,8 +855,10 @@ def _render_calendar_tab_unsafe():
                     </div>
                     """
                     
+                    # [수정] 원근무 색상 자동 보정
                     c_am = "#87CEEB"
                     c_pm = "#FFB6C1"
+                    
                     orig_info = ""
                     if orig_shift == "오전": orig_info = f"<span style='color:{c_am}; font-weight:bold;'>(전)</span> "
                     elif orig_shift == "오후": orig_info = f"<span style='color:{c_pm}; font-weight:bold;'>(후)</span> "
@@ -829,6 +872,7 @@ def _render_calendar_tab_unsafe():
                         if period_text: note_text += f" {period_text}"
                         inner_html = f"<div style='font-size:12px; font-weight:bold;'>{name_line}</div><div style='font-size:9px; opacity:0.9;'>{orig_info}{note_text}</div>"
                     
+                    # [수정] color 적용
                     html_content += f"<div class='schedule-bar {bar_class}' style='background-color:{color}; color:{text_col}; {border_style}; position:relative;' title='{personal_tooltip}'>{violation_marker}{inner_html}</div>"
                 else: html_content += "<div class='schedule-spacer'></div>"
             html_content += '</div>'
@@ -1116,6 +1160,26 @@ def render_view_manage_tab():
     if df.empty: st.info("데이터 없음"); return
     if 'date' not in df.columns: st.error("DB 형식 오류: date 컬럼 없음"); return
     df['display_date'] = df['date']
+    
+    # [추가] 원래 근무 정보 계산
+    group_history_df = load_data("group_history")
+    history_dict = {}
+    if not group_history_df.empty and 'driver_name' in group_history_df.columns:
+        for idx, row in group_history_df.iterrows():
+            d_name = row['driver_name']
+            if d_name not in history_dict: history_dict[d_name] = []
+            history_dict[d_name].append((row['start_date'], row['group_name']))
+        for d_name in history_dict:
+            history_dict[d_name].sort(key=lambda x: x[0], reverse=True)
+            
+    def get_orig(row):
+        grp = get_group_from_dict(history_dict, row['name'], row['date'])
+        if grp:
+            return calculate_auto_shift(grp, row['date'])
+        return ""
+    
+    df['original_shift'] = df.apply(get_orig, axis=1)
+
     with st.expander("🔎 검색", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1: sn = st.text_input("이름", key="search_name_admin")
@@ -1127,13 +1191,20 @@ def render_view_manage_tab():
     if len(sd) == 2: df = df[(df['date'] >= sd[0].strftime("%Y-%m-%d")) & (df['date'] <= sd[1].strftime("%Y-%m-%d"))]
     if stp != "전체" and 'type' in df.columns: df = df[df['type'] == stp]
     is_admin = st.session_state.get('auth_status') == 'admin'
+    
+    # 컬럼 순서 및 이름 정리
+    display_cols = ['date', 'name', 'type', 'shift', 'original_shift', 'note', 'created_at']
+    valid_cols = [c for c in display_cols if c in df.columns]
+    
+    # 보기 좋게 이름 변경 (선택사항)
+    final_df = df[valid_cols].copy()
+    final_df.columns = [c.replace('date', '날짜').replace('name', '이름').replace('type', '구분').replace('shift', '실제근무').replace('original_shift', '원래근무').replace('note', '비고').replace('created_at', '생성일') for c in final_df.columns]
+
     if is_admin:
         st.info("⚠️ 데이터 수정/삭제는 구글 시트에서 직접 하시는 것이 가장 빠르고 정확합니다.")
-        st.dataframe(df, use_container_width=True, height=800)
+        st.dataframe(final_df, use_container_width=True, height=800)
     else:
-        disp_cols = ['date', 'name', 'type', 'note']
-        valid_cols = [c for c in disp_cols if c in df.columns]
-        st.dataframe(df[valid_cols], use_container_width=True, height=1000)
+        st.dataframe(final_df, use_container_width=True, height=1000)
 
 def render_public_search_tab():
     render_view_manage_tab() 
@@ -1156,6 +1227,8 @@ def main():
                     role, name = user
                     st.session_state['auth_status'] = role
                     st.session_state['user_name'] = name
+                    # [추가] 로그인 성공 시 로그 기록
+                    log_login_access(uid, name)
                     st.rerun()
                 else:
                     st.error("아이디 또는 비밀번호가 잘못되었습니다.")
