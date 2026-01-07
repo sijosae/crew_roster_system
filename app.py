@@ -13,24 +13,26 @@ import re
 import io
 
 # ==========================================
-# 0. 전역 상수 및 초기화
+# 0. 전역 상수 및 콜백 함수 (최상단 배치)
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 
-def get_kst_now():
-    return datetime.utcnow() + timedelta(hours=9)
+# [핵심] 콜백 함수들을 반드시 여기에 정의해야 NameError가 안 납니다.
+def prev_cal_callback():
+    if st.session_state.view_month == 1:
+        st.session_state.view_year -= 1
+        st.session_state.view_month = 12
+    else:
+        st.session_state.view_month -= 1
 
-if 'system_logs' not in st.session_state:
-    st.session_state['system_logs'] = []
+def next_cal_callback():
+    if st.session_state.view_month == 12:
+        st.session_state.view_year += 1
+        st.session_state.view_month = 1
+    else:
+        st.session_state.view_month += 1
 
-if 'last_error_msg' not in st.session_state:
-    st.session_state['last_error_msg'] = None
-
-if 'action_logs' not in st.session_state:
-    st.session_state['action_logs'] = []
-
-# [중요] 달력 이동 콜백 함수 (State 직접 수정)
 def prev_month_indiv():
     if st.session_state.indiv_view_month == 1:
         st.session_state.indiv_view_year -= 1
@@ -45,19 +47,17 @@ def next_month_indiv():
     else:
         st.session_state.indiv_view_month += 1
 
-def prev_month_global():
-    if st.session_state.view_month == 1:
-        st.session_state.view_year -= 1
-        st.session_state.view_month = 12
-    else:
-        st.session_state.view_month -= 1
+def get_kst_now():
+    return datetime.utcnow() + timedelta(hours=9)
 
-def next_month_global():
-    if st.session_state.view_month == 12:
-        st.session_state.view_year += 1
-        st.session_state.view_month = 1
-    else:
-        st.session_state.view_month += 1
+if 'system_logs' not in st.session_state:
+    st.session_state['system_logs'] = []
+
+if 'last_error_msg' not in st.session_state:
+    st.session_state['last_error_msg'] = None
+
+if 'action_logs' not in st.session_state:
+    st.session_state['action_logs'] = []
 
 def add_log(msg, ids=None, sheet_name=None, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -281,9 +281,11 @@ def is_holiday_or_weekend(date_obj):
     return date_obj.weekday() >= 5 or date_obj in kr_holidays
 
 def clean_driver_name(name):
+    # 결측값(NaN), 빈 문자열, "nan" 문자열 확실하게 처리
     if pd.isna(name): return "" 
     s = str(name).strip()
     if s.lower() == "nan" or s == "": return ""
+    # 괄호 및 공백 제거
     s = re.sub(r'\(.*?\)', '', s) 
     s = s.replace(" ", "").strip()
     return s
@@ -319,8 +321,10 @@ def parse_roster_excel(file):
     date_rows = []
     for idx, row in df_raw.iterrows():
         val = str(row[0])
+        # [중요] 날짜 인식 로직 강화
         if "202" in val or "년" in val:
             try:
+                # D열(3)과 F열(5)에 데이터가 있는지 확인 (월, 일)
                 if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
                     date_rows.append(idx)
             except: pass
@@ -356,14 +360,19 @@ def parse_roster_excel(file):
                 
                 current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                 
+                # [수정] 차량번호 숫자만 추출 (예: '5002(1)' -> 5002)
                 try:
-                    car_num = int(str(raw_car).strip())
+                    raw_car_str = str(raw_car).strip()
+                    # 숫자만 추출
+                    digits_only = re.sub(r'[^0-9]', '', raw_car_str)
+                    car_num = int(digits_only)
                     is_valid_car = (5001 <= car_num <= 5300)
                     current_car = str(car_num)
                 except:
                     is_valid_car = False
                     current_car = ""
 
+                # 노선+순번+차량 모두 필수
                 if not (current_route and current_seq and is_valid_car):
                     continue
                 
@@ -619,7 +628,7 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* 로그인 버튼 - 스타벅스 그린 */
+        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 */
         button[kind="primary"], div[data-testid="stButton"] button {
             background-color: #00592D !important;
             border-color: #00592D !important;
@@ -631,7 +640,6 @@ def inject_custom_css():
             color: white !important;
         }
         
-        /* 모바일 대응 */
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
     </style>
     """, unsafe_allow_html=True)
@@ -703,6 +711,7 @@ def render_calendar_tab():
     except Exception: st.error("캘린더 렌더링 오류"); st.code(traceback.format_exc())
 
 def _render_calendar_tab_unsafe():
+    # [수정] 범례 및 제목 배치
     c_title, c_legend = st.columns([1, 2])
     with c_title:
         st.markdown("### 📅 월간 휴무 신청 현황")
@@ -721,8 +730,7 @@ def _render_calendar_tab_unsafe():
     if 'view_year' not in st.session_state: st.session_state.view_year = now.year
     if 'view_month' not in st.session_state: st.session_state.view_month = now.month
     
-    # [수정] 1줄 정렬 UI (라벨 숨김 + 텍스트 컬럼 이용)
-    # 배치: [년도 텍스트][Selectbox][월 텍스트][Selectbox][이전][다음][빠른입력]
+    # [수정] 달력 이동 (한 줄로 배치) - UI 비율 조정 (년/월 텍스트 공간 최소화)
     c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
     with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c2: st.selectbox("년도", range(2023, now.year + 3), key='view_year', label_visibility="collapsed")
@@ -768,7 +776,7 @@ def _render_calendar_tab_unsafe():
         
         full_stat, short_stat = get_stats_optimized(d_str, all_drivers, today_sch, history_dict)
         
-        # [수정] 오늘(노랑) / 내일(빨강) 배경색 로직 복구
+        # [수정] 오늘(노랑) / 내일(빨강) 배경색 로직
         bg_color = "white"
         border_style = "1px solid #e9ecef"
         
