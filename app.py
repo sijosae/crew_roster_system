@@ -13,14 +13,11 @@ import re
 import io
 
 # ==========================================
-# 0. 전역 상수 정의 (에러 방지용)
+# 0. 전역 상수 및 초기화
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 
-# ==========================================
-# 1. 로그 및 초기화
-# ==========================================
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
@@ -59,7 +56,7 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 2. DB 연결 (영구 캐싱)
+# 1. DB 연결 (영구 캐싱)
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -101,7 +98,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 실행 취소 (Undo) 로직
+# 2. 실행 취소 및 계정 관리
 # ==========================================
 def delete_rows_by_ids(sheet_name, id_list):
     if not id_list: return False
@@ -120,9 +117,6 @@ def delete_rows_by_ids(sheet_name, id_list):
     clear_cache_after_save()
     return True
 
-# ==========================================
-# 4. 인증 및 계정
-# ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
 
@@ -130,6 +124,7 @@ def login_user(username, password):
     df = load_data("users")
     if df.empty: return None
     pw_hash = make_hash(password)
+    if 'username' not in df.columns: return None
     df['username'] = df['username'].astype(str)
     user = df[(df['username'] == username) & (df['password'] == pw_hash)]
     if not user.empty:
@@ -168,7 +163,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 5. 데이터 저장
+# 3. 데이터 저장 로직
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -249,37 +244,36 @@ def add_company_event(date, title):
     return row_id
 
 # ==========================================
-# 6. [신규 모듈] 배차일지 분석 및 감차 엔진
+# 4. [모듈] 배차일지 분석 및 감차 엔진
 # ==========================================
 kr_holidays = holidays.KR()
 
 def is_holiday_or_weekend(date_obj):
-    # 토(5), 일(6) 또는 공휴일
     return date_obj.weekday() >= 5 or date_obj in kr_holidays
 
 def clean_driver_name(name):
     if not name: return ""
-    # 괄호와 괄호 안의 내용 제거
     return re.sub(r'\(.*?\)', '', str(name)).strip()
 
 def get_gamcha_rules():
     df = load_data("gamcha_rules")
     rules = []
-    if not df.empty:
+    if not df.empty and 'start_date' in df.columns:
         for _, row in df.iterrows():
             rules.append({
                 'start': row['start_date'],
                 'end': row['end_date'],
                 'route': str(row['route']).strip(),
                 'seq': str(row['sequence']).strip(),
-                'condition': row['condition'] # All, Weekend, Holiday
+                'condition': row['condition']
             })
     return rules
 
 def is_gamcha_target(date_str, route, seq, rules):
-    d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except: return False
     is_holi = is_holiday_or_weekend(d)
-    
     for r in rules:
         if r['start'] <= date_str <= r['end']:
             if r['route'] == route and r['seq'] == seq:
@@ -289,18 +283,16 @@ def is_gamcha_target(date_str, route, seq, rules):
 
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
-    
     date_rows = []
     for idx, row in df_raw.iterrows():
         val = str(row[0])
-        if "202" in val or "년" in val: # 연도 감지
+        if "202" in val or "년" in val:
             try:
                 if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
                     date_rows.append(idx)
             except: pass
             
     extracted_data = [] 
-    rules = get_gamcha_rules()
     
     for start_row in date_rows:
         try:
@@ -315,12 +307,8 @@ def parse_roster_excel(file):
             {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15} # Right
         ]
         
-        drivers_worked_today = set()
-        daily_records = [] 
-        
         for side in cols_map:
             last_route = None
-            
             for r_offset in range(3, 75): 
                 curr_idx = start_row + r_offset
                 if curr_idx >= len(df_raw): break
@@ -333,7 +321,6 @@ def parse_roster_excel(file):
                     last_route = str(raw_route).strip()
                 
                 current_route = last_route if last_route else "Unknown"
-                current_seq = str(raw_seq).strip()
                 current_car = str(df_raw.iloc[curr_idx, side['car']]).strip()
                 
                 am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
@@ -345,21 +332,18 @@ def parse_roster_excel(file):
                 pm_final = pm_sub if pm_sub else pm_fix
                 
                 if am_final: 
-                    drivers_worked_today.add(am_final)
-                    daily_records.append({
+                    extracted_data.append({
                         'date': current_date, 'name': am_final, 'shift': '오전', 
                         'route': current_route, 'car': current_car, 
                         'is_sub': bool(am_sub), 'orig_fix': am_fix
                     })
                 
                 if pm_final:
-                    drivers_worked_today.add(pm_final)
-                    daily_records.append({
+                    extracted_data.append({
                         'date': current_date, 'name': pm_final, 'shift': '오후', 
                         'route': current_route, 'car': current_car, 
                         'is_sub': bool(pm_sub), 'orig_fix': pm_fix
                     })
-        extracted_data.extend(daily_records)
     return pd.DataFrame(extracted_data)
 
 def save_work_history(df_history):
@@ -398,7 +382,7 @@ def add_gamcha_rule(start, end, route, seq, cond):
     clear_cache_after_save()
 
 # ==========================================
-# 7. 로직 및 계산 (기존 유지)
+# 5. 로직 및 계산 (기존 유지)
 # ==========================================
 def calculate_auto_shift(group_name, target_date_str):
     if not group_name or "조" not in group_name: return None
@@ -563,7 +547,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 8. 화면 렌더링
+# 6. 화면 렌더링
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -585,7 +569,6 @@ def inject_custom_css():
         .event-container::-webkit-scrollbar { display: none; }
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
         
-        /* [테두리 3px 진한 검정 회색 (#222)] */
         .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: none; border-bottom: none; }
         .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
         .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
@@ -593,7 +576,6 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [로그인 버튼 - 스타벅스 그린 강제] */
         button[kind="primary"] { background-color: #00592D !important; border-color: #00592D !important; color: white !important; }
         button[kind="primary"]:hover { background-color: #004d26 !important; border-color: #004d26 !important; color: white !important; }
         button[kind="primary"]:focus { box-shadow: 0 0 0 0.2rem rgba(0, 89, 45, 0.5) !important; outline: none !important; }
@@ -881,10 +863,14 @@ def render_individual_calendar_tab():
     drivers = load_data("drivers")
     if drivers.empty: st.warning("승무원 없음"); return
     
-    # 1. 휴무 계획 (Schedules)
+    # [수정] 데이터가 없을 경우를 대비한 안전 장치 (KeyError 방지)
     df_plan = load_data("schedules")
-    # 2. 실제 근무 (Work History) - 엑셀 업로드 데이터
+    if df_plan.empty or 'date' not in df_plan.columns:
+        df_plan = pd.DataFrame(columns=['date', 'name', 'type', 'note'])
+        
     df_work = load_data("work_history")
+    if df_work.empty or 'date' not in df_work.columns:
+        df_work = pd.DataFrame(columns=['date', 'name', 'shift', 'route', 'car', 'is_sub'])
     
     now = get_kst_now()
     if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
@@ -908,11 +894,9 @@ def render_individual_calendar_tab():
         year, month = st.session_state.indiv_view_year, st.session_state.indiv_view_month
         filter_ym = f"{year}-{month:02d}"
         
-        # 데이터 필터링
         my_plan = df_plan[(df_plan['name']==target) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
         my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
         
-        # 그룹 정보
         gh = load_data("group_history")
         h_dict = {}
         if not gh.empty:
@@ -931,23 +915,19 @@ def render_individual_calendar_tab():
                     if day == 0: st.write("")
                     else:
                         d_str = f"{year}-{month:02d}-{day:02d}"
-                        
-                        # 1. 기본값: 조별 자동 근무
                         grp = get_group_from_dict(h_dict, target, d_str)
                         auto = calculate_auto_shift(grp, d_str)
                         
-                        # 2. 우선순위: 실제 근무 > 휴무 계획 > 자동
                         cell_bg = "transparent"
                         txt = ""
                         
-                        # 실제 근무 확인
-                        p_work = my_work[my_work['date'] == d_str]
-                        p_plan = my_plan[my_plan['date'] == d_str]
+                        p_work = my_work[my_work['date'] == d_str] if not my_work.empty else pd.DataFrame()
+                        p_plan = my_plan[my_plan['date'] == d_str] if not my_plan.empty else pd.DataFrame()
                         
                         if not p_work.empty:
                             w_row = p_work.iloc[0]
                             is_sub = (str(w_row['is_sub']).upper() == 'Y')
-                            cell_bg = "#8e24aa" if is_sub else "#1e88e5" # 보라(대운) / 파랑(본인)
+                            cell_bg = "#8e24aa" if is_sub else "#1e88e5"
                             txt = f"<span style='color:white; font-weight:bold;'>{w_row['route']} ({w_row['car']})</span><br><span style='font-size:10px; color:white;'>{w_row['shift']}</span>"
                         elif not p_plan.empty:
                             pl_row = p_plan.iloc[0]
@@ -955,8 +935,6 @@ def render_individual_calendar_tab():
                             if t == "휴무": cell_bg = "#00592D"; txt = "<span style='color:white;'>휴무</span>"
                             else: cell_bg = get_type_color(t); txt = f"<span style='color:white;'>{t}</span>"
                         else:
-                            # 자동 근무 (실제 근무 데이터가 없으면 휴무일 수도 있음)
-                            # 하지만 여기서는 '예정'을 보여줌
                             if auto == "오전": cell_bg="#e3f2fd"; txt=f"<span style='color:black;'>오전 ({grp})</span>"
                             elif auto == "오후": cell_bg="#fff3e0"; txt=f"<span style='color:black;'>오후 ({grp})</span>"
                             elif auto == "휴무": cell_bg="#f1f3f5"; txt=f"<span style='color:#999;'>휴무 ({grp})</span>"
@@ -970,11 +948,16 @@ def render_individual_calendar_tab():
 def render_view_manage_tab():
     st.subheader("📊 데이터 조회")
     df = load_data("schedules")
-    if not df.empty:
-        with st.expander("검색"):
-            n = st.text_input("이름")
-            if n: st.dataframe(df[df['name'].str.contains(n)], use_container_width=True)
-            else: st.dataframe(df, use_container_width=True)
+    
+    # [수정] 빈 데이터 안전 장치
+    if df.empty or 'date' not in df.columns:
+        st.info("데이터가 없습니다.")
+        return
+
+    with st.expander("검색"):
+        n = st.text_input("이름")
+        if n: st.dataframe(df[df['name'].str.contains(n)], use_container_width=True)
+        else: st.dataframe(df, use_container_width=True)
 
 def render_public_search_tab(): render_view_manage_tab() 
 
