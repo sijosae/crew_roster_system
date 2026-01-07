@@ -30,29 +30,29 @@ if 'last_error_msg' not in st.session_state:
 if 'action_logs' not in st.session_state:
     st.session_state['action_logs'] = []
 
-# [콜백 함수] 달력 이동 로직
-def prev_month_callback():
+# [중요] 달력 이동 콜백 함수 (State 직접 수정)
+def prev_month_indiv():
     if st.session_state.indiv_view_month == 1:
         st.session_state.indiv_view_year -= 1
         st.session_state.indiv_view_month = 12
     else:
         st.session_state.indiv_view_month -= 1
 
-def next_month_callback():
+def next_month_indiv():
     if st.session_state.indiv_view_month == 12:
         st.session_state.indiv_view_year += 1
         st.session_state.indiv_view_month = 1
     else:
         st.session_state.indiv_view_month += 1
 
-def prev_cal_callback():
+def prev_month_global():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
         st.session_state.view_month = 12
     else:
         st.session_state.view_month -= 1
 
-def next_cal_callback():
+def next_month_global():
     if st.session_state.view_month == 12:
         st.session_state.view_year += 1
         st.session_state.view_month = 1
@@ -619,7 +619,7 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 */
+        /* 로그인 버튼 - 스타벅스 그린 */
         button[kind="primary"], div[data-testid="stButton"] button {
             background-color: #00592D !important;
             border-color: #00592D !important;
@@ -631,6 +631,7 @@ def inject_custom_css():
             color: white !important;
         }
         
+        /* 모바일 대응 */
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
     </style>
     """, unsafe_allow_html=True)
@@ -702,7 +703,6 @@ def render_calendar_tab():
     except Exception: st.error("캘린더 렌더링 오류"); st.code(traceback.format_exc())
 
 def _render_calendar_tab_unsafe():
-    # [수정] 범례 및 제목 배치
     c_title, c_legend = st.columns([1, 2])
     with c_title:
         st.markdown("### 📅 월간 휴무 신청 현황")
@@ -721,13 +721,16 @@ def _render_calendar_tab_unsafe():
     if 'view_year' not in st.session_state: st.session_state.view_year = now.year
     if 'view_month' not in st.session_state: st.session_state.view_month = now.month
     
-    # [수정] 달력 이동 (한 줄로 배치)
-    c_yr, c_mo, c_prev, c_next, c_btn = st.columns([1, 1, 0.5, 0.5, 1.5])
-    with c_yr: st.selectbox("년도", [now.year-1, now.year, now.year+1], key='view_year')
-    with c_mo: st.selectbox("월", range(1, 13), key='view_month')
-    with c_prev: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
-    with c_next: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
-    with c_btn:
+    # [수정] 1줄 정렬 UI (라벨 숨김 + 텍스트 컬럼 이용)
+    # 배치: [년도 텍스트][Selectbox][월 텍스트][Selectbox][이전][다음][빠른입력]
+    c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
+    with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
+    with c2: st.selectbox("년도", range(2023, now.year + 3), key='view_year', label_visibility="collapsed")
+    with c3: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
+    with c4: st.selectbox("월", range(1, 13), key='view_month', label_visibility="collapsed")
+    with c5: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
+    with c6: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
+    with c7:
         if st.session_state.get('auth_status') == 'admin':
             if st.button("➕ 빠른 입력", type="primary", use_container_width=True): show_input_dialog()
             
@@ -765,11 +768,23 @@ def _render_calendar_tab_unsafe():
         
         full_stat, short_stat = get_stats_optimized(d_str, all_drivers, today_sch, history_dict)
         
+        # [수정] 오늘(노랑) / 내일(빨강) 배경색 로직 복구
+        bg_color = "white"
+        border_style = "1px solid #e9ecef"
+        
+        if d_str == now.strftime("%Y-%m-%d"):
+            bg_color = "#fff9c4" # 노랑 (오늘)
+            border_style = "2px solid #fbc02d"
+        elif d_str == (now + timedelta(days=1)).strftime("%Y-%m-%d"):
+            bg_color = "#ffebee" # 연한 빨강 (내일)
+            border_style = "1px solid #ef5350"
+
         day_color = "#333"
         if wd_idx == 6 or is_holiday(datetime(year, month, day)): day_color = "#d32f2f"
         elif wd_idx == 5: day_color = "#1976D2"
         
-        html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="background:white; border:1px solid #e9ecef;">'
+        # 적용된 bg_color 사용
+        html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="background-color:{bg_color}; border:{border_style};">'
         html += f'<div class="day-header"><div style="display:flex; justify-content:space-between; padding:0 3px;"><span style="font-weight:bold; color:{day_color};">{day}일({WEEKDAY_KOREAN[wd_idx]})</span><span style="font-size:11px;">{len(today_sch)}명</span></div>'
         html += f'<div class="group-info-box">{get_daily_shift_summary(d_str)}</div></div>'
         if is_horiz: html += f'<div class="daily-stats-box" title="{full_stat}">{short_stat}</div>'
@@ -1068,20 +1083,23 @@ def render_individual_calendar_tab():
     if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
     if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
     
-    # [수정] 달력 이동 및 승무원 선택 (한 줄로 통합)
-    c_name, c_yr, c_mo, c_prev, c_next = st.columns([3, 1.5, 1.5, 0.5, 0.5])
-    with c_name: target = st.selectbox("승무원 선택", drivers['name'].tolist(), key='sel_driver')
+    # [수정] 1줄 정렬 UI (라벨 숨김 + 텍스트 컬럼 이용) - 개인별
+    c_nm, c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([2, 0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
+    
+    with c_nm: target = st.selectbox("승무원 선택", drivers['name'].tolist(), key='sel_driver', label_visibility="collapsed")
+    with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c_yr: 
-        st.selectbox("년도", [now.year-1, now.year, now.year+1], key='sb_ind_year')
+        st.selectbox("년도", range(2023, now.year + 3), key='sb_ind_year', label_visibility="collapsed")
         st.session_state.indiv_view_year = st.session_state.sb_ind_year
+    with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
     with c_mo: 
-        st.selectbox("월", range(1, 13), key='sb_ind_month')
+        st.selectbox("월", range(1, 13), key='sb_ind_month', label_visibility="collapsed")
         st.session_state.indiv_view_month = st.session_state.sb_ind_month
-    with c_prev:
-        if st.button("◀", key="i_prev_btn", on_click=prev_month_callback): pass
-    with c_next:
-        if st.button("▶", key="i_next_btn", on_click=next_month_callback): pass
-            
+    with c_prev: st.button("◀", key="i_prev_btn", on_click=prev_month_indiv)
+    with c_next: st.button("▶", key="i_next_btn", on_click=next_month_indiv)
+    
+    st.divider()
+
     if target:
         year, month = st.session_state.indiv_view_year, st.session_state.indiv_view_month
         filter_ym = f"{year}-{month:02d}"
@@ -1151,13 +1169,14 @@ def render_individual_calendar_tab():
                             is_sub = (str(w_row['is_sub']).upper() == 'Y')
                             
                             # [수정] 박스 글자 잘림 방지 (height:auto, 폰트조절) + 색상 적용 (오전:파랑, 오후:빨강)
-                            txt_color = "blue" if w_row['shift'] == '오전' else "red"
-                            cell_bg = "#E3F2FD" if w_row['shift'] == '오전' else "#FFEBEE" # 배경색도 연하게 구분
+                            txt_color = "white"
+                            if w_row['shift'] == '오전': cell_bg = "#1e88e5" # 진한 파랑
+                            elif w_row['shift'] == '오후': cell_bg = "#e53935" # 진한 빨강
                             
-                            if is_sub: cell_bg = "#F3E5F5" # 대운은 보라색 배경
+                            if is_sub: cell_bg = "#8e24aa" # 대운 보라
                             
-                            txt = f"""<span style='color:black; font-weight:bold; font-size:11px;'>{w_row['route']} {w_row['seq']}번<br>({w_row['car']})</span><br>
-                                      <span style='font-size:12px; color:{txt_color}; font-weight:bold;'>{w_row['shift']}</span>"""
+                            txt = f"""<span style='color:white; font-weight:bold; font-size:11px;'>{w_row['route']} {w_row['seq']}번<br>({w_row['car']})</span><br>
+                                      <span style='font-size:12px; color:white; font-weight:bold;'>{w_row['shift']}</span>"""
                             
                         elif not p_plan.empty:
                             pl_row = p_plan.iloc[0]
