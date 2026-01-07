@@ -13,7 +13,7 @@ import re
 import io
 
 # ==========================================
-# 0. 전역 상수 및 콜백 함수
+# 0. 전역 상수 및 콜백 함수 (최상단 배치)
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -21,6 +21,7 @@ SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
+# [핵심] 버튼 클릭 시 Selectbox의 Key 값을 직접 수정하여 동기화
 def prev_cal_callback():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
@@ -280,9 +281,11 @@ def is_holiday_or_weekend(date_obj):
     return date_obj.weekday() >= 5 or date_obj in kr_holidays
 
 def clean_driver_name(name):
+    # 결측값(NaN), 빈 문자열, "nan" 문자열 확실하게 처리
     if pd.isna(name): return "" 
     s = str(name).strip()
     if s.lower() == "nan" or s == "": return ""
+    # 괄호 및 공백 제거
     s = re.sub(r'\(.*?\)', '', s) 
     s = s.replace(" ", "").strip()
     return s
@@ -615,10 +618,21 @@ def inject_custom_css():
         .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
         .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
-        .calendar-day-box { border-right: 1px solid #e9ecef; border-top: 1px solid #e9ecef; border-bottom: 1px solid #e9ecef; border-left: 0; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
-        .calendar-day-box:first-child { border-left: 1px solid #e9ecef; }
+        
+        /* [수정] 박스 그림자 적용 (테두리 두께로 인한 밀림 방지) */
+        .calendar-day-box { 
+            border: 1px solid #e9ecef; 
+            min-height: 200px; 
+            padding: 0; 
+            background-color: white; 
+            display: flex; 
+            flex-direction: column; 
+            height: auto !important; 
+        }
+        
         .calendar-day-box-horiz { flex: 0 0 90px; } 
-        .calendar-day-box-grid { width: 100%; border: 1px solid #e9ecef; margin: 2px; }
+        .calendar-day-box-grid { width: 100%; margin: 2px; }
+        
         .horizontal-scroll-container::-webkit-scrollbar { height: 8px; }
         .horizontal-scroll-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
@@ -784,25 +798,23 @@ def _render_calendar_tab_unsafe():
         
         full_stat, short_stat = get_stats_optimized(d_str, all_drivers, today_sch, history_dict)
         
-        # [수정] 오늘/내일 하이라이트 (box-shadow 사용)
-        bg_color = "white"
+        # [수정] 오늘/내일 하이라이트 (box-shadow 사용, 박스 전체 적용)
         box_style = ""
         
         if d_str == now.strftime("%Y-%m-%d"):
-            bg_color = "#fff9c4" # 노랑 (오늘)
-            box_style = "box-shadow: inset 0 0 0 2px #fbc02d;"
-            
+            box_style = "box-shadow: inset 0 0 0 2px #fbc02d; background-color: #fff9c4;" # 노랑 (오늘)
         elif d_str == (now + timedelta(days=1)).strftime("%Y-%m-%d"):
-            bg_color = "#ffebee" # 연한 빨강 (내일)
-            box_style = "box-shadow: inset 0 0 0 1px #ef5350;"
+            box_style = "box-shadow: inset 0 0 0 1px #ef5350; background-color: #ffebee;" # 연한 빨강 (내일)
+        else:
+            box_style = "background-color: white;"
 
         day_color = "#333"
         if wd_idx == 6 or is_holiday(datetime(year, month, day)): day_color = "#d32f2f"
         elif wd_idx == 5: day_color = "#1976D2"
         
-        # 적용된 bg_color 사용 (day-header div에 적용)
-        html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="background:white; border:1px solid #e9ecef;">'
-        html += f'<div class="day-header" style="background-color:{bg_color}; {box_style}"><div style="display:flex; justify-content:space-between; padding:0 3px;"><span style="font-weight:bold; color:{day_color};">{day}일({WEEKDAY_KOREAN[wd_idx]})</span><span style="font-size:11px;">{len(today_sch)}명</span></div>'
+        # calendar-day-box에 box_style 적용
+        html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="{box_style}">'
+        html += f'<div class="day-header"><div style="display:flex; justify-content:space-between; padding:0 3px;"><span style="font-weight:bold; color:{day_color};">{day}일({WEEKDAY_KOREAN[wd_idx]})</span><span style="font-size:11px;">{len(today_sch)}명</span></div>'
         html += f'<div class="group-info-box">{get_daily_shift_summary(d_str)}</div></div>'
         if is_horiz: html += f'<div class="daily-stats-box" title="{full_stat}">{short_stat}</div>'
         
@@ -888,195 +900,6 @@ def _render_calendar_tab_unsafe():
                     if d == 0: st.markdown("<div class='calendar-day-box' style='background:#f8f9fa;'></div>", unsafe_allow_html=True)
                     else: st.markdown(get_day_html(d, False), unsafe_allow_html=True)
 
-def render_input_tab():
-    st.subheader("📝 관리자 입력 & 배차 관리")
-    t1, t2, t3, t4 = st.tabs(["휴무 등록", "행사 등록", "📂 배차일지 업로드", "⚙️ 감차 규칙"])
-    with t1:
-        c1, c2 = st.columns([2, 1])
-        with c1: names_str = st.text_area("이름 (엔터 구분)", height=68, key="tab_names")
-        with c2: rng = st.date_input("기간", [], help="시작/종료일 선택", key="tab_range")
-        c3, c4 = st.columns(2)
-        with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="tab_type")
-        with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="tab_shift")
-        nte = st.text_input("비고", key="tab_note")
-        st.markdown('<div class="red-button">', unsafe_allow_html=True)
-        if st.button("일괄 저장", type="primary", use_container_width=True):
-            if names_str and len(rng) > 0:
-                try:
-                    with st.spinner('저장...'): save_range_batch([n.strip() for n in names_str.split('\n') if n.strip()], rng[0], rng[-1], typ, sft, nte)
-                    st.success("완료"); st.rerun()
-                except: st.error("오류")
-    with t2:
-        ed = st.date_input("행사 기간", [], key="evt_rng")
-        et = st.text_input("내용", key="evt_tit")
-        if st.button("행사 저장"):
-            if et and len(ed) > 0:
-                for d in pd.date_range(ed[0], ed[-1]): add_company_event(d.strftime("%Y-%m-%d"), et)
-                st.cache_data.clear(); st.success("저장됨"); st.rerun()
-    with t3:
-        st.info("💡 엑셀 파일을 업로드하면 근무 이력을 자동 분석하여 DB에 저장합니다.")
-        up_file = st.file_uploader("배차일지 엑셀 파일 (.xlsx)", type=['xlsx'])
-        if up_file:
-            if st.button("분석 및 DB 저장 실행", type="primary"):
-                with st.spinner("엑셀 분석 중... (시간이 조금 걸립니다)"):
-                    try:
-                        df_res = parse_roster_excel(up_file)
-                        cnt = save_work_history(df_res)
-                        st.success(f"✅ {cnt}건의 근무 이력이 저장되었습니다!")
-                    except Exception as e:
-                        st.error(f"실패: {e}")
-                        st.code(traceback.format_exc())
-    with t4:
-        st.write("### 🛑 운행 감축(Reduction) 규칙 설정")
-        c_r1, c_r2 = st.columns(2)
-        with c_r1: 
-            g_start = st.date_input("시작일", value=datetime(2025,1,1))
-            g_end = st.date_input("종료일", value=datetime(2025,12,31))
-        with c_r2:
-            g_route = st.text_input("노선 번호 (예: 211)")
-            g_seq = st.text_input("순번 (예: 3)")
-            g_cond = st.selectbox("적용 조건", ["Weekend/Holiday", "Always"])
-        
-        if st.button("규칙 추가"):
-            if g_route and g_seq:
-                add_reduction_rule(g_start, g_end, g_route, g_seq, g_cond)
-                st.success("규칙 추가됨"); st.rerun()
-        
-        st.divider()
-        try:
-            rules_df = load_data("reduction_rules")
-            if not rules_df.empty: st.dataframe(rules_df)
-        except: st.caption("등록된 규칙 없음")
-
-def render_driver_manage_tab():
-    st.subheader("⚙️ 승무원 및 조(Group) 관리")
-    tab_bulk, tab_change, tab_resign, tab_users = st.tabs(["➕ 승무원 등록", "🔄 조 변경", "👋 퇴사 처리", "🔐 관리자 계정"])
-    with tab_bulk:
-        c1, c2 = st.columns([3, 1])
-        with c1: bulk_names = st.text_area("승무원 성명 목록 (엑셀 붙여넣기)", height=150)
-        with c2: 
-            selected_group = st.selectbox("소속 조", ["1조", "2조", "3조", "4조", "5조", "6조", "7조", "8조", "9조", "10조", "기타"])
-            st.markdown("<br>", unsafe_allow_html=True)
-            start_date = st.date_input("조 배정 시작일", get_kst_now().date())
-            st.markdown('<div class="red-button">', unsafe_allow_html=True)
-            if st.button("등록 실행", type="primary"):
-                if bulk_names:
-                    names = [n.strip() for n in bulk_names.replace(',', '\n').split('\n') if n.strip()]
-                    cnt = 0
-                    for name in names:
-                        if ',' in name or '\t' in name: parts = name.replace('\t', ',').split(','); name = parts[0].strip()
-                        if add_driver_with_group(name, selected_group, start_date.strftime("%Y-%m-%d")): cnt += 1
-                    st.success(f"{cnt}명 등록 완료!"); st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-    with tab_change:
-        st.info("💡 엑셀 등에서 이름을 복사해 붙여넣고, 변경할 조와 날짜를 선택하면 일괄 변경됩니다.")
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            change_names_str = st.text_area("대상 승무원 목록 (엔터로 구분)", height=200, key="change_names_input", placeholder="홍길동\n김철수\n이영희")
-        with c2:
-            target_grp = st.selectbox("이동할 조", ["1조", "2조", "3조", "4조", "5조", "6조", "7조", "8조", "9조", "10조", "기타"], key="new_grp_bulk")
-            st.markdown("<br>", unsafe_allow_html=True)
-            change_date = st.date_input("변경 기준일", get_kst_now().date(), key="eff_date_bulk")
-            st.markdown('<div class="red-button">', unsafe_allow_html=True)
-            if st.button("일괄 변경 적용", type="primary"):
-                if change_names_str:
-                    names_to_change = [n.strip() for n in change_names_str.replace(',', '\n').split('\n') if n.strip()]
-                    all_drivers = load_data("drivers")
-                    all_db_names = all_drivers['name'].astype(str).tolist() if not all_drivers.empty else []
-                    valid_names = []
-                    invalid_names = []
-                    for name in names_to_change:
-                        if name in all_db_names: valid_names.append(name)
-                        else: invalid_names.append(name)
-                    if invalid_names: st.error(f"❌ 다음 이름은 명단에 없어 제외됩니다: {', '.join(invalid_names)}")
-                    if valid_names:
-                        success_cnt = 0
-                        for name in valid_names:
-                            if add_driver_with_group(name, target_grp, change_date.strftime("%Y-%m-%d")): success_cnt += 1
-                        st.success(f"✅ {success_cnt}명의 조를 '{target_grp}'로 변경했습니다.")
-                        if success_cnt > 0: st.balloons()
-                    else: st.warning("변경할 유효한 대상이 없습니다.")
-                else: st.warning("이름을 입력해주세요.")
-            st.markdown('</div>', unsafe_allow_html=True)
-    with tab_resign:
-        drivers = load_data("drivers")
-        if not drivers.empty and 'resigned_date' in drivers.columns:
-            active_drivers = drivers[drivers['resigned_date'] == ""]
-        else:
-            active_drivers = pd.DataFrame()
-        if not active_drivers.empty:
-            st.info("💡 퇴사 처리를 하면 해당 날짜부터 근무 인원 집계 및 달력 표시에서 제외됩니다.")
-            c_r1, c_r2 = st.columns(2)
-            with c_r1: r_target = st.selectbox("퇴사자 선택", active_drivers['name'].tolist(), key="resign_dr")
-            with c_r2: r_date = st.date_input("퇴사 일자", get_kst_now().date(), key="resign_date")
-            st.markdown('<div class="red-button">', unsafe_allow_html=True)
-            if st.button("퇴사 처리 실행", type="primary", key="btn_resign"):
-                set_driver_resignation(r_target, r_date.strftime("%Y-%m-%d"))
-                st.success(f"{r_target}님 퇴사 처리 완료"); st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        else: st.info("등록된 승무원이 없습니다.")
-    with tab_users:
-        st.write("### 🔐 관리자 및 직원 계정 관리")
-        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
-        with c1: new_id = st.text_input("새 아이디")
-        with c2: new_pw = st.text_input("새 비밀번호", type="password")
-        with c3: new_role = st.selectbox("권한", ["admin", "staff"], format_func=lambda x: "관리자" if x == "admin" else "직원")
-        with c3: new_name = st.text_input("사용자 이름")
-        with c4:
-            st.markdown("<br>", unsafe_allow_html=True) 
-            if st.button("계정 생성", type="primary"):
-                if new_id and new_pw and new_name:
-                    if add_user_account(new_id, new_pw, new_role, new_name):
-                        st.success(f"계정 {new_id} 생성 완료"); st.rerun()
-                    else: st.error("이미 존재하는 아이디입니다.")
-                else: st.warning("모든 항목을 입력하세요.")
-        st.divider()
-        st.write("### 🔑 비밀번호 변경")
-        users_df = load_data("users")
-        if not users_df.empty:
-            c_pw1, c_pw2, c_pw3 = st.columns([3, 3, 1])
-            with c_pw1: target_user_pw = st.selectbox("대상 계정 선택", users_df['username'].tolist())
-            with c_pw2: target_new_pw = st.text_input("변경할 비밀번호", type="password", key="chg_pw_input")
-            with c_pw3:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("비밀번호 변경", type="primary"):
-                    if target_new_pw:
-                        if update_user_password(target_user_pw, target_new_pw):
-                            st.success(f"{target_user_pw}님의 비밀번호가 변경되었습니다.")
-                        else: st.error("변경 실패")
-                    else: st.warning("새 비밀번호를 입력하세요.")
-        st.divider()
-        st.write("📋 **등록된 계정 목록**")
-        if not users_df.empty:
-            for idx, row in users_df.iterrows():
-                cc1, cc2, cc3, cc4, cc5 = st.columns([2, 2, 2, 2, 1])
-                with cc1: st.write(f"**{row['username']}**")
-                with cc2: st.write(row['name'])
-                with cc3: st.write("관리자" if row['role']=='admin' else "직원")
-                with cc4: st.write(row['created_at'])
-                with cc5:
-                    if row['username'] != 'admin':
-                        if st.button("삭제", key=f"del_user_{row['username']}_{idx}"):
-                            delete_user_account(row['username'])
-                            st.success("삭제됨"); st.rerun()
-    st.divider()
-    drivers = load_data("drivers")
-    if not drivers.empty:
-        search_dr = st.text_input("승무원 명부 검색")
-        if search_dr and 'name' in drivers.columns: 
-            drivers = drivers[drivers['name'].str.contains(search_dr)]
-        if 'resigned_date' in drivers.columns:
-            drivers['status'] = drivers['resigned_date'].apply(lambda x: f"퇴사 ({x})" if x else "재직")
-            st.dataframe(drivers[['name', 'group_name', 'status']], hide_index=True, use_container_width=True, height=800)
-        else:
-            st.dataframe(drivers, use_container_width=True)
-        with st.expander("🗑️ 승무원 삭제"):
-            if 'name' in drivers.columns:
-                del_target = st.selectbox("삭제 대상", drivers['name'].tolist(), key="del")
-                if st.button("영구 삭제"): 
-                    delete_driver(del_target)
-                    st.rerun()
-
 def render_individual_calendar_tab():
     st.subheader("👤 승무원별 월간 근무 현황 (통합)")
     inject_custom_css()
@@ -1097,8 +920,12 @@ def render_individual_calendar_tab():
             if c not in df_work.columns: df_work[c] = ""
     
     now = get_kst_now()
-    if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
-    if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
+    
+    # [수정] 초기화 로직 강화 (세션 스테이트가 없을 때만 오늘 날짜 대입)
+    if 'indiv_view_year' not in st.session_state: 
+        st.session_state.indiv_view_year = now.year
+    if 'indiv_view_month' not in st.session_state: 
+        st.session_state.indiv_view_month = now.month
     
     # [수정] 1줄 정렬 UI (라벨 숨김 + 텍스트 컬럼 이용) - 개인별
     c_nm, c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([2, 0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
@@ -1106,16 +933,37 @@ def render_individual_calendar_tab():
     with c_nm: target = st.selectbox("승무원 선택", drivers['name'].tolist(), key='sel_driver', label_visibility="collapsed")
     with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c_yr: 
-        st.selectbox("년도", range(2023, now.year + 3), key='sb_ind_year', label_visibility="collapsed")
-        # [중요] 세션 상태 즉시 반영
-        st.session_state.indiv_view_year = st.session_state.sb_ind_year
+        # [핵심] Selectbox 값과 indiv_view_year 동기화
+        selected_year = st.selectbox("년도", range(2023, now.year + 3), index=range(2023, now.year + 3).index(st.session_state.indiv_view_year), key='sb_ind_year', label_visibility="collapsed")
+        if selected_year != st.session_state.indiv_view_year:
+            st.session_state.indiv_view_year = selected_year
+            st.rerun()
+
     with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
     with c_mo: 
-        st.selectbox("월", range(1, 13), key='sb_ind_month', label_visibility="collapsed")
-        # [중요] 세션 상태 즉시 반영
-        st.session_state.indiv_view_month = st.session_state.sb_ind_month
-    with c_prev: st.button("◀", key="i_prev_btn", on_click=prev_month_indiv)
-    with c_next: st.button("▶", key="i_next_btn", on_click=next_month_indiv)
+        # [핵심] Selectbox 값과 indiv_view_month 동기화
+        selected_month = st.selectbox("월", range(1, 13), index=st.session_state.indiv_view_month - 1, key='sb_ind_month', label_visibility="collapsed")
+        if selected_month != st.session_state.indiv_view_month:
+            st.session_state.indiv_view_month = selected_month
+            st.rerun()
+
+    with c_prev: 
+        if st.button("◀", key="i_prev_btn"):
+            if st.session_state.indiv_view_month == 1:
+                st.session_state.indiv_view_year -= 1
+                st.session_state.indiv_view_month = 12
+            else:
+                st.session_state.indiv_view_month -= 1
+            st.rerun()
+            
+    with c_next: 
+        if st.button("▶", key="i_next_btn"):
+            if st.session_state.indiv_view_month == 12:
+                st.session_state.indiv_view_year += 1
+                st.session_state.indiv_view_month = 1
+            else:
+                st.session_state.indiv_view_month += 1
+            st.rerun()
     
     st.divider()
 
