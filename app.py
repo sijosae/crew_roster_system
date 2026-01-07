@@ -13,7 +13,7 @@ import re
 import io
 
 # ==========================================
-# 0. 전역 상수 및 콜백 함수 (최상단 배치)
+# 0. 전역 상수 및 콜백 함수
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -21,7 +21,6 @@ SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# [핵심 수정] 변수명 통일 (view_year / view_month)
 def prev_cal_callback():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
@@ -36,7 +35,6 @@ def next_cal_callback():
     else:
         st.session_state.view_month += 1
 
-# [핵심 수정] 변수명 통일 (indiv_view_year / indiv_view_month)
 def prev_month_indiv():
     if st.session_state.indiv_view_month == 1:
         st.session_state.indiv_view_year -= 1
@@ -786,13 +784,14 @@ def _render_calendar_tab_unsafe():
         
         full_stat, short_stat = get_stats_optimized(d_str, all_drivers, today_sch, history_dict)
         
-        # [수정] 오늘(노랑) / 내일(빨강) 배경색 로직 (box-shadow 사용)
+        # [수정] 오늘/내일 하이라이트 (box-shadow 사용)
         bg_color = "white"
         box_style = ""
         
         if d_str == now.strftime("%Y-%m-%d"):
             bg_color = "#fff9c4" # 노랑 (오늘)
             box_style = "box-shadow: inset 0 0 0 2px #fbc02d;"
+            
         elif d_str == (now + timedelta(days=1)).strftime("%Y-%m-%d"):
             bg_color = "#ffebee" # 연한 빨강 (내일)
             box_style = "box-shadow: inset 0 0 0 1px #ef5350;"
@@ -801,8 +800,9 @@ def _render_calendar_tab_unsafe():
         if wd_idx == 6 or is_holiday(datetime(year, month, day)): day_color = "#d32f2f"
         elif wd_idx == 5: day_color = "#1976D2"
         
-        html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="background-color:{bg_color}; {box_style}">'
-        html += f'<div class="day-header"><div style="display:flex; justify-content:space-between; padding:0 3px;"><span style="font-weight:bold; color:{day_color};">{day}일({WEEKDAY_KOREAN[wd_idx]})</span><span style="font-size:11px;">{len(today_sch)}명</span></div>'
+        # 적용된 bg_color 사용 (day-header div에 적용)
+        html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="background:white; border:1px solid #e9ecef;">'
+        html += f'<div class="day-header" style="background-color:{bg_color}; {box_style}"><div style="display:flex; justify-content:space-between; padding:0 3px;"><span style="font-weight:bold; color:{day_color};">{day}일({WEEKDAY_KOREAN[wd_idx]})</span><span style="font-size:11px;">{len(today_sch)}명</span></div>'
         html += f'<div class="group-info-box">{get_daily_shift_summary(d_str)}</div></div>'
         if is_horiz: html += f'<div class="daily-stats-box" title="{full_stat}">{short_stat}</div>'
         
