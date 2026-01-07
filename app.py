@@ -323,7 +323,7 @@ def parse_roster_excel(file):
                 
                 current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                 
-                # [수정] 차량번호 5001~5300
+                # 차량번호 5001~5300 체크
                 try:
                     car_num = int(str(raw_car).strip())
                     is_valid_car = (5001 <= car_num <= 5300)
@@ -587,13 +587,13 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [수정] 로그인 버튼 색상 강제 */
-        button[kind="primary"], div.stButton > button, div[data-testid="stFormSubmitButton"] > button {
+        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 (Important + Specificity) */
+        button[kind="primary"], div.stButton > button, div[data-testid="stFormSubmitButton"] > button, div[data-testid="stButton"] button {
             background-color: #00592D !important;
             border-color: #00592D !important;
             color: white !important;
         }
-        button[kind="primary"]:hover, div.stButton > button:hover, div[data-testid="stFormSubmitButton"] > button:hover {
+        button[kind="primary"]:hover, div.stButton > button:hover, div[data-testid="stFormSubmitButton"] > button:hover, div[data-testid="stButton"] button:hover {
             background-color: #004d26 !important;
             border-color: #004d26 !important;
             color: white !important;
@@ -759,14 +759,12 @@ def _render_calendar_tab_unsafe():
                 if orig == '오전': orig_mk = "<span style='color:#87CEEB; font-weight:bold;'>(전)</span> "
                 elif orig == '오후': orig_mk = "<span style='color:#FFB6C1; font-weight:bold;'>(후)</span> "
                 
-                # [수정] 절대 위치를 사용한 이름 중앙 정렬 (아이콘 영향 받지 않음)
                 inner = f"""<div style="position:relative; width:100%; display:flex; justify-content:center; align-items:center;">
                     <div style="position:absolute; left:2px;">{pre}</div>
                     <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; padding:0 14px;">{row['name']}</div>
                     <div style="position:absolute; right:2px;">{suf}</div></div>"""
                 
                 n_txt = row['note'] if row['note'] else row['type']
-                # [수정] period_text(기간표시) 복구
                 if period_text: n_txt += f" {period_text}"
                 
                 sub_txt = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
@@ -799,7 +797,6 @@ def _render_calendar_tab_unsafe():
                         <div style="position:absolute; right:2px;">{suf}</div></div>"""
                     
                     n_txt = row['note'] if row['note'] else row['type']
-                    # [수정] period_text(기간표시) 복구
                     if period_text: n_txt += f" {period_text}"
                     
                     sub = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
@@ -832,7 +829,7 @@ def render_input_tab():
     with t1:
         c1, c2 = st.columns([2, 1])
         with c1: names_str = st.text_area("이름 (엔터 구분)", height=68, key="tab_names")
-        with c2: rng = st.date_input("기간", [], key="tab_range")
+        with c2: rng = st.date_input("기간", [], help="시작/종료일 선택", key="tab_range")
         c3, c4 = st.columns(2)
         with c3: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="tab_type")
         with c4: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="tab_shift")
@@ -1021,14 +1018,18 @@ def render_individual_calendar_tab():
     drivers = load_data("drivers")
     if drivers.empty: st.warning("승무원 없음"); return
     
-    # [수정] 빈 데이터 안전 장치 (KeyError 방지)
+    # [수정] 빈 데이터 안전 장치 (KeyError 방지) + 컬럼 강제 생성
     df_plan = load_data("schedules")
     if df_plan.empty or 'date' not in df_plan.columns:
         df_plan = pd.DataFrame(columns=['date', 'name', 'type', 'note'])
         
     df_work = load_data("work_history")
-    if df_work.empty or 'date' not in df_work.columns:
-        df_work = pd.DataFrame(columns=['date', 'name', 'shift', 'route', 'car', 'is_sub'])
+    required_cols = ['date', 'name', 'shift', 'route', 'car', 'is_sub']
+    if df_work.empty:
+        df_work = pd.DataFrame(columns=required_cols)
+    else:
+        for c in required_cols:
+            if c not in df_work.columns: df_work[c] = ""
     
     now = get_kst_now()
     if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
@@ -1055,15 +1056,21 @@ def render_individual_calendar_tab():
         my_plan = df_plan[(df_plan['name']==target) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
         my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
         
-        # [추가] 통계 계산 로직 (월간/연간)
-        stats_am = len(my_work[my_work['shift'] == '오전'])
-        stats_pm = len(my_work[my_work['shift'] == '오후'])
+        # [수정] 통계 계산 로직 (월간/연간)
+        if not my_work.empty and 'shift' in my_work.columns:
+            stats_am = len(my_work[my_work['shift'] == '오전'])
+            stats_pm = len(my_work[my_work['shift'] == '오후'])
+        else:
+            stats_am, stats_pm = 0, 0
         
         # 연간 통계
         y_filter = f"{year}-"
         y_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(y_filter))] if not df_work.empty else pd.DataFrame()
-        y_am = len(y_work[y_work['shift'] == '오전'])
-        y_pm = len(y_work[y_work['shift'] == '오후'])
+        if not y_work.empty and 'shift' in y_work.columns:
+            y_am = len(y_work[y_work['shift'] == '오전'])
+            y_pm = len(y_work[y_work['shift'] == '오후'])
+        else:
+            y_am, y_pm = 0, 0
         
         # 상단 통계 배지
         st.markdown(f"""
