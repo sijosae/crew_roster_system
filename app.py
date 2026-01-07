@@ -18,7 +18,7 @@ import io
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 
-# [핵심] 콜백 함수들을 반드시 여기에 정의해야 NameError가 안 납니다.
+# [수정] 콜백 함수: 세션 상태를 직접 수정하여 버튼 클릭 시 즉시 반응하도록 함
 def prev_cal_callback():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
@@ -281,11 +281,9 @@ def is_holiday_or_weekend(date_obj):
     return date_obj.weekday() >= 5 or date_obj in kr_holidays
 
 def clean_driver_name(name):
-    # 결측값(NaN), 빈 문자열, "nan" 문자열 확실하게 처리
     if pd.isna(name): return "" 
     s = str(name).strip()
     if s.lower() == "nan" or s == "": return ""
-    # 괄호 및 공백 제거
     s = re.sub(r'\(.*?\)', '', s) 
     s = s.replace(" ", "").strip()
     return s
@@ -321,10 +319,8 @@ def parse_roster_excel(file):
     date_rows = []
     for idx, row in df_raw.iterrows():
         val = str(row[0])
-        # [중요] 날짜 인식 로직 강화
         if "202" in val or "년" in val:
             try:
-                # D열(3)과 F열(5)에 데이터가 있는지 확인 (월, 일)
                 if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
                     date_rows.append(idx)
             except: pass
@@ -360,10 +356,8 @@ def parse_roster_excel(file):
                 
                 current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                 
-                # [수정] 차량번호 숫자만 추출 (예: '5002(1)' -> 5002)
                 try:
                     raw_car_str = str(raw_car).strip()
-                    # 숫자만 추출
                     digits_only = re.sub(r'[^0-9]', '', raw_car_str)
                     car_num = int(digits_only)
                     is_valid_car = (5001 <= car_num <= 5300)
@@ -372,7 +366,6 @@ def parse_roster_excel(file):
                     is_valid_car = False
                     current_car = ""
 
-                # 노선+순번+차량 모두 필수
                 if not (current_route and current_seq and is_valid_car):
                     continue
                 
@@ -399,29 +392,55 @@ def parse_roster_excel(file):
                     })
     return pd.DataFrame(extracted_data)
 
-def save_work_history(df_history):
+# [중요] 기존 데이터를 덮어쓰지 않고 병합(Merge)하는 로직으로 수정
+def save_work_history(df_new):
     sh = get_db_connection()
     try:
         ws = sh.worksheet("work_history")
-        ws.clear()
-    except:
+    except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="work_history", rows=1000, cols=10)
+        ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
+
+    # 1. 기존 데이터 로드
+    existing_data = ws.get_all_values()
+    df_old = pd.DataFrame()
+    if len(existing_data) > 1:
+        headers = existing_data.pop(0)
+        df_old = pd.DataFrame(existing_data, columns=headers)
     
+    # 2. 데이터 병합 (날짜+이름+오전/오후 기준 중복 제거)
+    # 새 데이터가 우선순위를 가짐 (최신 업데이트 반영)
+    if df_old.empty:
+        df_final = df_new
+    else:
+        # DB 컬럼과 맞추기
+        required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']
+        for c in required_cols:
+            if c not in df_new.columns: df_new[c] = ""
+            if c not in df_old.columns: df_old[c] = ""
+            
+        df_new = df_new[required_cols]
+        df_old = df_old[required_cols]
+        
+        # 합치기 (새것을 뒤에 붙이고 중복 제거 시 'last' 유지 -> 새것이 남음)
+        df_combined = pd.concat([df_old, df_new])
+        # 중복 기준: 날짜, 이름, 오전/오후 가 같으면 덮어쓰기
+        df_final = df_combined.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
+        
+    # 3. 정렬 (날짜순)
+    df_final = df_final.sort_values(by=['date', 'name'])
+    
+    # 4. 저장 (전체 클리어 후 다시 쓰기)
+    ws.clear()
     ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
     
-    rows = []
-    now_str = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    for _, row in df_history.iterrows():
-        rows.append([
-            row['date'], row['name'], row['shift'], row['route'], row['seq'],
-            row['car'], "Y" if row['is_sub'] else "N", row['orig_fix'], now_str
-        ])
-    
-    if rows:
-        ws.append_rows(rows)
-        clear_cache_after_save()
-        return len(rows)
-    return 0
+    # 대량 데이터 쓰기 최적화
+    data_to_write = df_final.fillna("").astype(str).values.tolist()
+    if data_to_write:
+        ws.append_rows(data_to_write)
+        
+    clear_cache_after_save()
+    return len(df_new)
 
 def add_reduction_rule(start, end, route, seq, cond):
     sh = get_db_connection()
@@ -905,15 +924,23 @@ def render_input_tab():
                 for d in pd.date_range(ed[0], ed[-1]): add_company_event(d.strftime("%Y-%m-%d"), et)
                 st.cache_data.clear(); st.success("저장됨"); st.rerun()
     with t3:
-        st.info("💡 엑셀 파일을 업로드하면 근무 이력을 자동 분석하여 DB에 저장합니다.")
-        up_file = st.file_uploader("배차일지 엑셀 파일 (.xlsx)", type=['xlsx'])
-        if up_file:
+        st.info("💡 엑셀 파일을 업로드하면 근무 이력을 자동 분석하여 DB에 저장합니다. (여러 파일 동시 업로드 가능)")
+        # [수정] 다중 파일 업로드 허용
+        up_files = st.file_uploader("배차일지 엑셀 파일 (.xlsx)", type=['xlsx'], accept_multiple_files=True)
+        if up_files:
             if st.button("분석 및 DB 저장 실행", type="primary"):
-                with st.spinner("엑셀 분석 중... (시간이 조금 걸립니다)"):
+                with st.spinner("엑셀 분석 및 병합 중..."):
                     try:
-                        df_res = parse_roster_excel(up_file)
-                        cnt = save_work_history(df_res)
-                        st.success(f"✅ {cnt}건의 근무 이력이 저장되었습니다!")
+                        all_data = pd.DataFrame()
+                        for file in up_files:
+                            df_part = parse_roster_excel(file)
+                            all_data = pd.concat([all_data, df_part], ignore_index=True)
+                        
+                        if not all_data.empty:
+                            cnt = save_work_history(all_data)
+                            st.success(f"✅ 총 {cnt}건의 근무 이력이 저장되었습니다!")
+                        else:
+                            st.warning("분석된 데이터가 없습니다.")
                     except Exception as e:
                         st.error(f"실패: {e}")
                         st.code(traceback.format_exc())
