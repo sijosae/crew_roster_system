@@ -323,7 +323,7 @@ def parse_roster_excel(file):
                 
                 current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                 
-                # 차량번호 5001~5300 체크
+                # [수정] 차량번호 5001~5300
                 try:
                     car_num = int(str(raw_car).strip())
                     is_valid_car = (5001 <= car_num <= 5300)
@@ -759,12 +759,14 @@ def _render_calendar_tab_unsafe():
                 if orig == '오전': orig_mk = "<span style='color:#87CEEB; font-weight:bold;'>(전)</span> "
                 elif orig == '오후': orig_mk = "<span style='color:#FFB6C1; font-weight:bold;'>(후)</span> "
                 
+                # [수정] 절대 위치를 사용한 이름 중앙 정렬 (아이콘 영향 받지 않음)
                 inner = f"""<div style="position:relative; width:100%; display:flex; justify-content:center; align-items:center;">
                     <div style="position:absolute; left:2px;">{pre}</div>
                     <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; padding:0 14px;">{row['name']}</div>
                     <div style="position:absolute; right:2px;">{suf}</div></div>"""
                 
                 n_txt = row['note'] if row['note'] else row['type']
+                # [수정] period_text(기간표시) 복구
                 if period_text: n_txt += f" {period_text}"
                 
                 sub_txt = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
@@ -797,6 +799,7 @@ def _render_calendar_tab_unsafe():
                         <div style="position:absolute; right:2px;">{suf}</div></div>"""
                     
                     n_txt = row['note'] if row['note'] else row['type']
+                    # [수정] period_text(기간표시) 복구
                     if period_text: n_txt += f" {period_text}"
                     
                     sub = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
@@ -991,7 +994,7 @@ def render_driver_manage_tab():
                 with cc4: st.write(row['created_at'])
                 with cc5:
                     if row['username'] != 'admin':
-                        if st.button("삭제", key=f"del_user_{row['username']}"):
+                        if st.button("삭제", key=f"del_user_{row['username']}_{idx}"):
                             delete_user_account(row['username'])
                             st.success("삭제됨"); st.rerun()
     st.divider()
