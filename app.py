@@ -30,6 +30,35 @@ if 'last_error_msg' not in st.session_state:
 if 'action_logs' not in st.session_state:
     st.session_state['action_logs'] = []
 
+# 달력 이동을 위한 콜백 함수
+def prev_month_callback():
+    if st.session_state.indiv_view_month == 1:
+        st.session_state.indiv_view_year -= 1
+        st.session_state.indiv_view_month = 12
+    else:
+        st.session_state.indiv_view_month -= 1
+
+def next_month_callback():
+    if st.session_state.indiv_view_month == 12:
+        st.session_state.indiv_view_year += 1
+        st.session_state.indiv_view_month = 1
+    else:
+        st.session_state.indiv_view_month += 1
+
+def prev_cal_callback():
+    if st.session_state.view_month == 1:
+        st.session_state.view_year -= 1
+        st.session_state.view_month = 12
+    else:
+        st.session_state.view_month -= 1
+
+def next_cal_callback():
+    if st.session_state.view_month == 12:
+        st.session_state.view_year += 1
+        st.session_state.view_month = 1
+    else:
+        st.session_state.view_month += 1
+
 def add_log(msg, ids=None, sheet_name=None, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = {
@@ -252,11 +281,14 @@ def is_holiday_or_weekend(date_obj):
     return date_obj.weekday() >= 5 or date_obj in kr_holidays
 
 def clean_driver_name(name):
-    if not name: return ""
-    # [수정] 공백 및 괄호 제거
-    s = str(name)
-    s = re.sub(r'\(.*?\)', '', s) # 괄호 제거
-    s = s.replace(" ", "").strip() # 공백 제거
+    # [수정] 결측값(NaN), 빈 문자열, "nan" 문자열 확실하게 처리
+    if pd.isna(name): return "" 
+    s = str(name).strip()
+    if s.lower() == "nan" or s == "": return ""
+    
+    # 괄호 및 공백 제거
+    s = re.sub(r'\(.*?\)', '', s) 
+    s = s.replace(" ", "").strip()
     return s
 
 def get_reduction_rules():
@@ -340,8 +372,11 @@ def parse_roster_excel(file):
                 if not (current_route and current_seq and is_valid_car):
                     continue
                 
+                # [수정] 이름 정제 로직 강화 (clean_driver_name 사용)
                 am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                 am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
+                
+                # 대운자가 있으면 대운자, 없으면 고정자
                 am_final = am_sub if am_sub else am_fix
                 
                 pm_fix = clean_driver_name(df_raw.iloc[curr_idx, side['pm_fix']])
@@ -399,7 +434,7 @@ def add_reduction_rule(start, end, route, seq, cond):
     clear_cache_after_save()
 
 # ==========================================
-# 5. 로직 및 계산 (기존 유지)
+# 5. 로직 및 계산
 # ==========================================
 def calculate_auto_shift(group_name, target_date_str):
     if not group_name or "조" not in group_name: return None
@@ -692,20 +727,13 @@ def _render_calendar_tab_unsafe():
     # [수정] 달력 이동 (버튼 + Selectbox 혼합)
     c1, c2, c3, c4 = st.columns([0.5, 1, 1, 0.5])
     with c1: 
-        if st.button("◀", key="prev_cal_btn"):
-            if st.session_state.view_month == 1: st.session_state.view_year-=1; st.session_state.view_month=12
-            else: st.session_state.view_month-=1
-            st.rerun()
+        if st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback): pass
     with c2: 
-        # Selectbox는 session_state를 직접 제어하도록 key 할당
         st.selectbox("년도", [now.year-1, now.year, now.year+1], key='view_year')
     with c3: 
         st.selectbox("월", range(1, 13), key='view_month')
     with c4:
-        if st.button("▶", key="next_cal_btn"):
-            if st.session_state.view_month == 12: st.session_state.view_year+=1; st.session_state.view_month=1
-            else: st.session_state.view_month+=1
-            st.rerun()
+        if st.button("▶", key="next_cal_btn", on_click=next_cal_callback): pass
             
     c_view, c_btn = st.columns([3, 1])
     with c_view: view_mode = st.radio("보기", ["가로 스크롤", "달력"], horizontal=True, label_visibility="collapsed")
@@ -1060,15 +1088,9 @@ def render_individual_calendar_tab():
         # 버튼을 누르면 이전/다음달로 state 변경
         c_prev, c_next = st.columns(2)
         with c_prev:
-            if st.button("◀", key="i_prev_btn"):
-                if st.session_state.indiv_view_month==1: st.session_state.indiv_view_year-=1;st.session_state.indiv_view_month=12
-                else: st.session_state.indiv_view_month-=1
-                st.rerun()
+            if st.button("◀", key="i_prev_btn", on_click=prev_month_callback): pass
         with c_next:
-            if st.button("▶", key="i_next_btn"):
-                if st.session_state.indiv_view_month==12: st.session_state.indiv_view_year+=1;st.session_state.indiv_view_month=1
-                else: st.session_state.indiv_view_month+=1
-                st.rerun()
+            if st.button("▶", key="i_next_btn", on_click=next_month_callback): pass
             
     if target:
         year, month = st.session_state.indiv_view_year, st.session_state.indiv_view_month
