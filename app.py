@@ -13,7 +13,13 @@ import re
 import io
 
 # ==========================================
-# 0. 로그 및 초기화
+# 0. 전역 상수 정의 (에러 방지용)
+# ==========================================
+WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
+SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
+
+# ==========================================
+# 1. 로그 및 초기화
 # ==========================================
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
@@ -53,7 +59,7 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 1. DB 연결 (영구 캐싱)
+# 2. DB 연결 (영구 캐싱)
 # ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
@@ -95,7 +101,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 2. 실행 취소 (Undo) 로직
+# 3. 실행 취소 (Undo) 로직
 # ==========================================
 def delete_rows_by_ids(sheet_name, id_list):
     if not id_list: return False
@@ -115,7 +121,7 @@ def delete_rows_by_ids(sheet_name, id_list):
     return True
 
 # ==========================================
-# 3. 인증 및 계정
+# 4. 인증 및 계정
 # ==========================================
 def make_hash(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
@@ -162,7 +168,7 @@ def update_user_password(username, new_password):
     return False
 
 # ==========================================
-# 4. 데이터 저장 (기존 모듈)
+# 5. 데이터 저장
 # ==========================================
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -243,7 +249,7 @@ def add_company_event(date, title):
     return row_id
 
 # ==========================================
-# 5. [신규 모듈] 배차일지 분석 및 감차 엔진
+# 6. [신규 모듈] 배차일지 분석 및 감차 엔진
 # ==========================================
 kr_holidays = holidays.KR()
 
@@ -282,67 +288,46 @@ def is_gamcha_target(date_str, route, seq, rules):
     return False
 
 def parse_roster_excel(file):
-    # 엑셀 로드
     df_raw = pd.read_excel(file, header=None)
     
-    # 1. 날짜가 있는 행 찾기 (블록 시작점 감지)
-    # A열에 "20XX" 또는 "년"이 포함된 행을 찾음
     date_rows = []
     for idx, row in df_raw.iterrows():
         val = str(row[0])
         if "202" in val or "년" in val: # 연도 감지
-            # D열(월), F열(일) 체크
             try:
-                # 간단한 검증
                 if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
                     date_rows.append(idx)
             except: pass
             
-    extracted_data = [] # {date, route, seq, car, shift, name, is_sub}
-    
+    extracted_data = [] 
     rules = get_gamcha_rules()
     
     for start_row in date_rows:
-        # 날짜 파싱
         try:
             year = int(str(df_raw.iloc[start_row, 0]).replace("년","").strip())
             month = int(str(df_raw.iloc[start_row, 3]).replace("월","").strip())
             day = int(str(df_raw.iloc[start_row, 5]).replace("일","").strip())
             current_date = datetime(year, month, day).strftime("%Y-%m-%d")
-        except: continue # 날짜 파싱 실패시 스킵
+        except: continue 
 
-        # 데이터 블록 읽기 (헤더 2줄 건너뛰고 시작)
-        # 2025년 기준: start_row + 2 부터 데이터 시작
-        # 블록 끝은 다음 date_rows 전까지 혹은 빈 행이 연속될 때까지
-        # 안전하게 70행 정도 탐색하되, 데이터가 없으면 중단
-        
-        # 좌측(A~H), 우측(I~P) 분리 처리
-        # 좌측: B(노선), C(순번), D(차량), E(오전고정), F(오전대운), G(오후고정), H(오후대운)
-        # 우측: J(노선), K(순번), L(차량), M(오전고정), N(오전대운), O(오후고정), P(오후대운)
-        
         cols_map = [
             {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7}, # Left
             {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15} # Right
         ]
         
-        # 해당 일자의 모든 실제 근무자 수집 (감차 여부 판단용)
         drivers_worked_today = set()
-        
-        # 임시 저장소
         daily_records = [] 
         
         for side in cols_map:
             last_route = None
             
-            for r_offset in range(3, 75): # 헤더 이후 약 70행
+            for r_offset in range(3, 75): 
                 curr_idx = start_row + r_offset
                 if curr_idx >= len(df_raw): break
                 
-                # 순번이 없으면 데이터 없음으로 간주
                 raw_seq = df_raw.iloc[curr_idx, side['seq']]
                 if pd.isna(raw_seq) or str(raw_seq).strip() == "": continue
                 
-                # Fill-down Logic for Route
                 raw_route = df_raw.iloc[curr_idx, side['route']]
                 if pd.notnull(raw_route) and str(raw_route).strip() != "":
                     last_route = str(raw_route).strip()
@@ -351,17 +336,14 @@ def parse_roster_excel(file):
                 current_seq = str(raw_seq).strip()
                 current_car = str(df_raw.iloc[curr_idx, side['car']]).strip()
                 
-                # AM Parsing
                 am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                 am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
                 am_final = am_sub if am_sub else am_fix
                 
-                # PM Parsing
                 pm_fix = clean_driver_name(df_raw.iloc[curr_idx, side['pm_fix']])
                 pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                 pm_final = pm_sub if pm_sub else pm_fix
                 
-                # Record Logic
                 if am_final: 
                     drivers_worked_today.add(am_final)
                     daily_records.append({
@@ -377,13 +359,7 @@ def parse_roster_excel(file):
                         'route': current_route, 'car': current_car, 
                         'is_sub': bool(pm_sub), 'orig_fix': pm_fix
                     })
-                    
-                # 감차 대상자 체크를 위해 고정 기사 정보 저장
-                # (실제 근무 리스트에 이들이 없으면 감차휴무로 처리)
-                # 이 부분은 별도 로직보다는, 일단 Worked에 없으면 근무 안한것임.
-                
         extracted_data.extend(daily_records)
-        
     return pd.DataFrame(extracted_data)
 
 def save_work_history(df_history):
@@ -422,10 +398,8 @@ def add_gamcha_rule(start, end, route, seq, cond):
     clear_cache_after_save()
 
 # ==========================================
-# 6. 로직 및 계산 (기존 유지)
+# 7. 로직 및 계산 (기존 유지)
 # ==========================================
-SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
-
 def calculate_auto_shift(group_name, target_date_str):
     if not group_name or "조" not in group_name: return None
     try:
@@ -589,7 +563,7 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
     return prefix, suffix, period_text
 
 # ==========================================
-# 6. 화면 렌더링
+# 8. 화면 렌더링
 # ==========================================
 def inject_custom_css():
     st.markdown("""
@@ -611,6 +585,7 @@ def inject_custom_css():
         .event-container::-webkit-scrollbar { display: none; }
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: #fff; border-bottom: 1px solid #eee; }
         
+        /* [테두리 3px 진한 검정 회색 (#222)] */
         .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: none; border-bottom: none; }
         .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
         .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
@@ -618,6 +593,7 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
+        /* [로그인 버튼 - 스타벅스 그린 강제] */
         button[kind="primary"] { background-color: #00592D !important; border-color: #00592D !important; color: white !important; }
         button[kind="primary"]:hover { background-color: #004d26 !important; border-color: #004d26 !important; color: white !important; }
         button[kind="primary"]:focus { box-shadow: 0 0 0 0.2rem rgba(0, 89, 45, 0.5) !important; outline: none !important; }
@@ -680,14 +656,16 @@ def render_log_tab():
                         delete_rows_by_ids(log['sheet'], log['ids'])
                         log['status'] = 'canceled'; st.rerun()
     with t_acc:
-        df_acc = load_data("access_logs")
-        if not df_acc.empty: st.dataframe(df_acc.sort_values(by='timestamp', ascending=False), use_container_width=True)
-        else: st.info("접속 기록이 없습니다.")
+        try:
+            df_acc = load_data("access_logs")
+            if not df_acc.empty: st.dataframe(df_acc.sort_values(by='timestamp', ascending=False), use_container_width=True)
+            else: st.info("접속 기록이 없습니다.")
+        except: st.warning("로그 없음")
 
 def render_calendar_tab():
     if st.session_state.get('last_error_msg'): st.error("오류 발생"); st.code(st.session_state['last_error_msg'])
     try: _render_calendar_tab_unsafe()
-    except Exception: st.error("캘린더 렌더링 오류")
+    except Exception: st.error("캘린더 렌더링 오류"); st.code(traceback.format_exc())
 
 def _render_calendar_tab_unsafe():
     types = ["휴무", "교육", "경조사", "징계", "당일 해지", "병가", "휴직", "기타"]
