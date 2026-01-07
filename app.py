@@ -244,7 +244,7 @@ def add_company_event(date, title):
     return row_id
 
 # ==========================================
-# 4. [모듈] 배차일지 분석 및 감차 엔진
+# 4. [모듈] 배차일지 분석 및 감차(Reduction) 엔진
 # ==========================================
 kr_holidays = holidays.KR()
 
@@ -255,8 +255,9 @@ def clean_driver_name(name):
     if not name: return ""
     return re.sub(r'\(.*?\)', '', str(name)).strip()
 
-def get_gamcha_rules():
-    df = load_data("gamcha_rules")
+# [수정] 용어 변경 (Gamcha -> Reduction)
+def get_reduction_rules():
+    df = load_data("reduction_rules")
     rules = []
     if not df.empty and 'start_date' in df.columns:
         for _, row in df.iterrows():
@@ -269,7 +270,8 @@ def get_gamcha_rules():
             })
     return rules
 
-def is_gamcha_target(date_str, route, seq, rules):
+# [수정] 용어 변경 (Gamcha -> Reduction)
+def is_reduction_target(date_str, route, seq, rules):
     try:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
     except: return False
@@ -313,15 +315,30 @@ def parse_roster_excel(file):
                 curr_idx = start_row + r_offset
                 if curr_idx >= len(df_raw): break
                 
-                raw_seq = df_raw.iloc[curr_idx, side['seq']]
-                if pd.isna(raw_seq) or str(raw_seq).strip() == "": continue
-                
+                # 노선 번호 Fill-down
                 raw_route = df_raw.iloc[curr_idx, side['route']]
                 if pd.notnull(raw_route) and str(raw_route).strip() != "":
                     last_route = str(raw_route).strip()
+                current_route = last_route if last_route else ""
+
+                # 순번, 차량번호 체크
+                raw_seq = df_raw.iloc[curr_idx, side['seq']]
+                raw_car = df_raw.iloc[curr_idx, side['car']]
                 
-                current_route = last_route if last_route else "Unknown"
-                current_car = str(df_raw.iloc[curr_idx, side['car']]).strip()
+                current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
+                
+                # [수정] 차량번호 범위 확장 (5001 ~ 5300)
+                try:
+                    car_num = int(str(raw_car).strip())
+                    is_valid_car = (5001 <= car_num <= 5300)
+                    current_car = str(car_num)
+                except:
+                    is_valid_car = False
+                    current_car = ""
+
+                # 엄격한 데이터 유효성 검사 (노선+순번+차량 모두 필수)
+                if not (current_route and current_seq and is_valid_car):
+                    continue
                 
                 am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                 am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
@@ -370,12 +387,13 @@ def save_work_history(df_history):
         return len(rows)
     return 0
 
-def add_gamcha_rule(start, end, route, seq, cond):
+# [수정] 용어 변경 (Gamcha -> Reduction)
+def add_reduction_rule(start, end, route, seq, cond):
     sh = get_db_connection()
     try:
-        ws = sh.worksheet("gamcha_rules")
+        ws = sh.worksheet("reduction_rules")
     except:
-        ws = sh.add_worksheet(title="gamcha_rules", rows=100, cols=5)
+        ws = sh.add_worksheet(title="reduction_rules", rows=100, cols=5)
         ws.append_row(['start_date', 'end_date', 'route', 'sequence', 'condition'])
     
     ws.append_row([str(start), str(end), str(route), str(seq), cond])
@@ -576,21 +594,16 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [로그인 버튼 - 스타벅스 그린 강제 적용] */
-        div.login-btn button { 
-            background-color: #00592D !important; 
-            border-color: #00592D !important; 
-            color: white !important; 
-            width: 100%; 
-            font-weight: bold; 
-            border-radius: 5px; 
-            padding: 10px; 
-            border: none; 
+        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 (Important + Specificity) */
+        button[kind="primary"], div.stButton > button, div[data-testid="stFormSubmitButton"] > button {
+            background-color: #00592D !important;
+            border-color: #00592D !important;
+            color: white !important;
         }
-        div.login-btn button:hover { 
-            background-color: #004d26 !important; 
-            border-color: #004d26 !important; 
-            color: white !important; 
+        button[kind="primary"]:hover, div.stButton > button:hover, div[data-testid="stFormSubmitButton"] > button:hover {
+            background-color: #004d26 !important;
+            border-color: #004d26 !important;
+            color: white !important;
         }
         
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
@@ -608,7 +621,6 @@ def show_input_dialog():
         with c1: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
-        
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
@@ -753,14 +765,12 @@ def _render_calendar_tab_unsafe():
                 if orig == '오전': orig_mk = "<span style='color:#87CEEB; font-weight:bold;'>(전)</span> "
                 elif orig == '오후': orig_mk = "<span style='color:#FFB6C1; font-weight:bold;'>(후)</span> "
                 
-                # [수정] 절대 위치를 사용한 이름 중앙 정렬 (아이콘 영향 받지 않음)
                 inner = f"""<div style="position:relative; width:100%; display:flex; justify-content:center; align-items:center;">
                     <div style="position:absolute; left:2px;">{pre}</div>
                     <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; padding:0 14px;">{row['name']}</div>
                     <div style="position:absolute; right:2px;">{suf}</div></div>"""
                 
                 n_txt = row['note'] if row['note'] else row['type']
-                # [수정] period_text(기간표시) 복구
                 if period_text: n_txt += f" {period_text}"
                 
                 sub_txt = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
@@ -793,7 +803,6 @@ def _render_calendar_tab_unsafe():
                         <div style="position:absolute; right:2px;">{suf}</div></div>"""
                     
                     n_txt = row['note'] if row['note'] else row['type']
-                    # [수정] period_text(기간표시) 복구
                     if period_text: n_txt += f" {period_text}"
                     
                     sub = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
@@ -859,7 +868,7 @@ def render_input_tab():
                         st.error(f"실패: {e}")
                         st.code(traceback.format_exc())
     with t4:
-        st.write("### 🛑 감차(운행중지) 규칙 설정")
+        st.write("### 🛑 운행 감축(Reduction) 규칙 설정")
         c_r1, c_r2 = st.columns(2)
         with c_r1: 
             g_start = st.date_input("시작일", value=datetime(2025,1,1))
@@ -871,12 +880,12 @@ def render_input_tab():
         
         if st.button("규칙 추가"):
             if g_route and g_seq:
-                add_gamcha_rule(g_start, g_end, g_route, g_seq, g_cond)
+                add_reduction_rule(g_start, g_end, g_route, g_seq, g_cond)
                 st.success("규칙 추가됨"); st.rerun()
         
         st.divider()
         try:
-            rules_df = load_data("gamcha_rules")
+            rules_df = load_data("reduction_rules")
             if not rules_df.empty: st.dataframe(rules_df)
         except: st.caption("등록된 규칙 없음")
 
@@ -1048,6 +1057,30 @@ def render_individual_calendar_tab():
         
         my_plan = df_plan[(df_plan['name']==target) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
         my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
+        
+        # [추가] 통계 계산 로직 (월간/연간)
+        stats_am = len(my_work[my_work['shift'] == '오전'])
+        stats_pm = len(my_work[my_work['shift'] == '오후'])
+        
+        # 연간 통계
+        y_filter = f"{year}-"
+        y_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(y_filter))] if not df_work.empty else pd.DataFrame()
+        y_am = len(y_work[y_work['shift'] == '오전'])
+        y_pm = len(y_work[y_work['shift'] == '오후'])
+        
+        # 상단 통계 배지
+        st.markdown(f"""
+        <div style='display:flex; justify-content:center; gap:20px; margin-bottom:15px;'>
+            <div style='background:#E3F2FD; padding:10px 20px; border-radius:10px; text-align:center; border:1px solid #90CAF9;'>
+                <div style='font-size:12px; font-weight:bold; color:#1565C0;'>📅 {month}월 근무</div>
+                <div style='font-size:14px;'>오전 <span style='color:blue; font-weight:bold;'>{stats_am}</span> / 오후 <span style='color:red; font-weight:bold;'>{stats_pm}</span></div>
+            </div>
+            <div style='background:#FFF3E0; padding:10px 20px; border-radius:10px; text-align:center; border:1px solid #FFCC80;'>
+                <div style='font-size:12px; font-weight:bold; color:#E65100;'>📈 {year}년 누적</div>
+                <div style='font-size:14px;'>오전 <span style='color:blue; font-weight:bold;'>{y_am}</span> / 오후 <span style='color:red; font-weight:bold;'>{y_pm}</span></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
         gh = load_data("group_history")
         h_dict = {}
