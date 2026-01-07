@@ -18,7 +18,10 @@ import io
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 
-# [수정] 콜백 함수: 세션 상태를 직접 수정하여 버튼 클릭 시 즉시 반응하도록 함
+def get_kst_now():
+    return datetime.utcnow() + timedelta(hours=9)
+
+# [핵심] 버튼 클릭 시 Selectbox의 Key 값을 직접 수정하여 동기화
 def prev_cal_callback():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
@@ -34,21 +37,19 @@ def next_cal_callback():
         st.session_state.view_month += 1
 
 def prev_month_indiv():
-    if st.session_state.indiv_view_month == 1:
-        st.session_state.indiv_view_year -= 1
-        st.session_state.indiv_view_month = 12
+    # sb_ind_month/year 키를 직접 제어
+    if st.session_state.sb_ind_month == 1:
+        st.session_state.sb_ind_year -= 1
+        st.session_state.sb_ind_month = 12
     else:
-        st.session_state.indiv_view_month -= 1
+        st.session_state.sb_ind_month -= 1
 
 def next_month_indiv():
-    if st.session_state.indiv_view_month == 12:
-        st.session_state.indiv_view_year += 1
-        st.session_state.indiv_view_month = 1
+    if st.session_state.sb_ind_month == 12:
+        st.session_state.sb_ind_year += 1
+        st.session_state.sb_ind_month = 1
     else:
-        st.session_state.indiv_view_month += 1
-
-def get_kst_now():
-    return datetime.utcnow() + timedelta(hours=9)
+        st.session_state.sb_ind_month += 1
 
 if 'system_logs' not in st.session_state:
     st.session_state['system_logs'] = []
@@ -392,7 +393,6 @@ def parse_roster_excel(file):
                     })
     return pd.DataFrame(extracted_data)
 
-# [중요] 기존 데이터를 덮어쓰지 않고 병합(Merge)하는 로직으로 수정
 def save_work_history(df_new):
     sh = get_db_connection()
     try:
@@ -401,19 +401,15 @@ def save_work_history(df_new):
         ws = sh.add_worksheet(title="work_history", rows=1000, cols=10)
         ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
 
-    # 1. 기존 데이터 로드
     existing_data = ws.get_all_values()
     df_old = pd.DataFrame()
     if len(existing_data) > 1:
         headers = existing_data.pop(0)
         df_old = pd.DataFrame(existing_data, columns=headers)
     
-    # 2. 데이터 병합 (날짜+이름+오전/오후 기준 중복 제거)
-    # 새 데이터가 우선순위를 가짐 (최신 업데이트 반영)
     if df_old.empty:
         df_final = df_new
     else:
-        # DB 컬럼과 맞추기
         required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']
         for c in required_cols:
             if c not in df_new.columns: df_new[c] = ""
@@ -422,19 +418,14 @@ def save_work_history(df_new):
         df_new = df_new[required_cols]
         df_old = df_old[required_cols]
         
-        # 합치기 (새것을 뒤에 붙이고 중복 제거 시 'last' 유지 -> 새것이 남음)
         df_combined = pd.concat([df_old, df_new])
-        # 중복 기준: 날짜, 이름, 오전/오후 가 같으면 덮어쓰기
         df_final = df_combined.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
         
-    # 3. 정렬 (날짜순)
     df_final = df_final.sort_values(by=['date', 'name'])
     
-    # 4. 저장 (전체 클리어 후 다시 쓰기)
     ws.clear()
     ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
     
-    # 대량 데이터 쓰기 최적화
     data_to_write = df_final.fillna("").astype(str).values.tolist()
     if data_to_write:
         ws.append_rows(data_to_write)
@@ -626,14 +617,15 @@ def inject_custom_css():
         .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
         .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
-        .calendar-day-box { border-right: 1px solid #e9ecef; border-top: 1px solid #e9ecef; border-bottom: 1px solid #e9ecef; border-left: 0; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
-        .calendar-day-box:first-child { border-left: 1px solid #e9ecef; }
+        .calendar-day-box { border: 1px solid #e9ecef; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
         .calendar-day-box-horiz { flex: 0 0 90px; } 
-        .calendar-day-box-grid { width: 100%; border: 1px solid #e9ecef; margin: 2px; }
+        .calendar-day-box-grid { width: 100%; margin: 2px; }
+        
         .horizontal-scroll-container::-webkit-scrollbar { height: 8px; }
         .horizontal-scroll-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb:hover { background: #aaa; }
+        
         .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
         .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
@@ -647,7 +639,7 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 */
+        /* [수정] 로그인 버튼 색상 */
         button[kind="primary"], div[data-testid="stButton"] button {
             background-color: #00592D !important;
             border-color: #00592D !important;
@@ -730,7 +722,6 @@ def render_calendar_tab():
     except Exception: st.error("캘린더 렌더링 오류"); st.code(traceback.format_exc())
 
 def _render_calendar_tab_unsafe():
-    # [수정] 범례 및 제목 배치
     c_title, c_legend = st.columns([1, 2])
     with c_title:
         st.markdown("### 📅 월간 휴무 신청 현황")
@@ -749,7 +740,8 @@ def _render_calendar_tab_unsafe():
     if 'view_year' not in st.session_state: st.session_state.view_year = now.year
     if 'view_month' not in st.session_state: st.session_state.view_month = now.month
     
-    # [수정] 달력 이동 (한 줄로 배치) - UI 비율 조정 (년/월 텍스트 공간 최소화)
+    # [수정] 1줄 정렬 UI (라벨 숨김 + 텍스트 컬럼 이용)
+    # 배치: [년도 텍스트][Selectbox][월 텍스트][Selectbox][이전][다음][빠른입력]
     c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
     with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c2: st.selectbox("년도", range(2023, now.year + 3), key='view_year', label_visibility="collapsed")
@@ -795,23 +787,22 @@ def _render_calendar_tab_unsafe():
         
         full_stat, short_stat = get_stats_optimized(d_str, all_drivers, today_sch, history_dict)
         
-        # [수정] 오늘(노랑) / 내일(빨강) 배경색 로직
+        # [수정] 오늘/내일 하이라이트 (box-shadow 사용)
         bg_color = "white"
-        border_style = "1px solid #e9ecef"
+        box_style = ""
         
         if d_str == now.strftime("%Y-%m-%d"):
             bg_color = "#fff9c4" # 노랑 (오늘)
-            border_style = "2px solid #fbc02d"
+            box_style = "box-shadow: inset 0 0 0 2px #fbc02d;"
         elif d_str == (now + timedelta(days=1)).strftime("%Y-%m-%d"):
             bg_color = "#ffebee" # 연한 빨강 (내일)
-            border_style = "1px solid #ef5350"
+            box_style = "box-shadow: inset 0 0 0 1px #ef5350;"
 
         day_color = "#333"
         if wd_idx == 6 or is_holiday(datetime(year, month, day)): day_color = "#d32f2f"
         elif wd_idx == 5: day_color = "#1976D2"
         
-        # 적용된 bg_color 사용
-        html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="background-color:{bg_color}; border:{border_style};">'
+        html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="background-color:{bg_color}; {box_style}">'
         html += f'<div class="day-header"><div style="display:flex; justify-content:space-between; padding:0 3px;"><span style="font-weight:bold; color:{day_color};">{day}일({WEEKDAY_KOREAN[wd_idx]})</span><span style="font-size:11px;">{len(today_sch)}명</span></div>'
         html += f'<div class="group-info-box">{get_daily_shift_summary(d_str)}</div></div>'
         if is_horiz: html += f'<div class="daily-stats-box" title="{full_stat}">{short_stat}</div>'
@@ -924,23 +915,15 @@ def render_input_tab():
                 for d in pd.date_range(ed[0], ed[-1]): add_company_event(d.strftime("%Y-%m-%d"), et)
                 st.cache_data.clear(); st.success("저장됨"); st.rerun()
     with t3:
-        st.info("💡 엑셀 파일을 업로드하면 근무 이력을 자동 분석하여 DB에 저장합니다. (여러 파일 동시 업로드 가능)")
-        # [수정] 다중 파일 업로드 허용
-        up_files = st.file_uploader("배차일지 엑셀 파일 (.xlsx)", type=['xlsx'], accept_multiple_files=True)
-        if up_files:
+        st.info("💡 엑셀 파일을 업로드하면 근무 이력을 자동 분석하여 DB에 저장합니다.")
+        up_file = st.file_uploader("배차일지 엑셀 파일 (.xlsx)", type=['xlsx'])
+        if up_file:
             if st.button("분석 및 DB 저장 실행", type="primary"):
-                with st.spinner("엑셀 분석 및 병합 중..."):
+                with st.spinner("엑셀 분석 중... (시간이 조금 걸립니다)"):
                     try:
-                        all_data = pd.DataFrame()
-                        for file in up_files:
-                            df_part = parse_roster_excel(file)
-                            all_data = pd.concat([all_data, df_part], ignore_index=True)
-                        
-                        if not all_data.empty:
-                            cnt = save_work_history(all_data)
-                            st.success(f"✅ 총 {cnt}건의 근무 이력이 저장되었습니다!")
-                        else:
-                            st.warning("분석된 데이터가 없습니다.")
+                        df_res = parse_roster_excel(up_file)
+                        cnt = save_work_history(df_res)
+                        st.success(f"✅ {cnt}건의 근무 이력이 저장되었습니다!")
                     except Exception as e:
                         st.error(f"실패: {e}")
                         st.code(traceback.format_exc())
