@@ -21,7 +21,7 @@ SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# [핵심] 버튼 클릭 시 Selectbox의 Key 값을 직접 수정하여 동기화
+# [핵심 수정] 변수명 통일 (view_year / view_month)
 def prev_cal_callback():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
@@ -36,20 +36,20 @@ def next_cal_callback():
     else:
         st.session_state.view_month += 1
 
+# [핵심 수정] 변수명 통일 (indiv_view_year / indiv_view_month)
 def prev_month_indiv():
-    # sb_ind_month/year 키를 직접 제어
-    if st.session_state.sb_ind_month == 1:
-        st.session_state.sb_ind_year -= 1
-        st.session_state.sb_ind_month = 12
+    if st.session_state.indiv_view_month == 1:
+        st.session_state.indiv_view_year -= 1
+        st.session_state.indiv_view_month = 12
     else:
-        st.session_state.sb_ind_month -= 1
+        st.session_state.indiv_view_month -= 1
 
 def next_month_indiv():
-    if st.session_state.sb_ind_month == 12:
-        st.session_state.sb_ind_year += 1
-        st.session_state.sb_ind_month = 1
+    if st.session_state.indiv_view_month == 12:
+        st.session_state.indiv_view_year += 1
+        st.session_state.indiv_view_month = 1
     else:
-        st.session_state.sb_ind_month += 1
+        st.session_state.indiv_view_month += 1
 
 if 'system_logs' not in st.session_state:
     st.session_state['system_logs'] = []
@@ -617,15 +617,14 @@ def inject_custom_css():
         .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
         .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
-        .calendar-day-box { border: 1px solid #e9ecef; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
+        .calendar-day-box { border-right: 1px solid #e9ecef; border-top: 1px solid #e9ecef; border-bottom: 1px solid #e9ecef; border-left: 0; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
+        .calendar-day-box:first-child { border-left: 1px solid #e9ecef; }
         .calendar-day-box-horiz { flex: 0 0 90px; } 
-        .calendar-day-box-grid { width: 100%; margin: 2px; }
-        
+        .calendar-day-box-grid { width: 100%; border: 1px solid #e9ecef; margin: 2px; }
         .horizontal-scroll-container::-webkit-scrollbar { height: 8px; }
         .horizontal-scroll-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb:hover { background: #aaa; }
-        
         .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
         .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
@@ -639,7 +638,7 @@ def inject_custom_css():
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
 
-        /* [수정] 로그인 버튼 색상 */
+        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 */
         button[kind="primary"], div[data-testid="stButton"] button {
             background-color: #00592D !important;
             border-color: #00592D !important;
@@ -722,6 +721,7 @@ def render_calendar_tab():
     except Exception: st.error("캘린더 렌더링 오류"); st.code(traceback.format_exc())
 
 def _render_calendar_tab_unsafe():
+    # [수정] 범례 및 제목 배치
     c_title, c_legend = st.columns([1, 2])
     with c_title:
         st.markdown("### 📅 월간 휴무 신청 현황")
@@ -740,8 +740,7 @@ def _render_calendar_tab_unsafe():
     if 'view_year' not in st.session_state: st.session_state.view_year = now.year
     if 'view_month' not in st.session_state: st.session_state.view_month = now.month
     
-    # [수정] 1줄 정렬 UI (라벨 숨김 + 텍스트 컬럼 이용)
-    # 배치: [년도 텍스트][Selectbox][월 텍스트][Selectbox][이전][다음][빠른입력]
+    # [수정] 달력 이동 (한 줄로 배치) - UI 비율 조정 (년/월 텍스트 공간 최소화)
     c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
     with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c2: st.selectbox("년도", range(2023, now.year + 3), key='view_year', label_visibility="collapsed")
@@ -787,7 +786,7 @@ def _render_calendar_tab_unsafe():
         
         full_stat, short_stat = get_stats_optimized(d_str, all_drivers, today_sch, history_dict)
         
-        # [수정] 오늘/내일 하이라이트 (box-shadow 사용)
+        # [수정] 오늘(노랑) / 내일(빨강) 배경색 로직 (box-shadow 사용)
         bg_color = "white"
         box_style = ""
         
@@ -1108,10 +1107,12 @@ def render_individual_calendar_tab():
     with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c_yr: 
         st.selectbox("년도", range(2023, now.year + 3), key='sb_ind_year', label_visibility="collapsed")
+        # [중요] 세션 상태 즉시 반영
         st.session_state.indiv_view_year = st.session_state.sb_ind_year
     with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
     with c_mo: 
         st.selectbox("월", range(1, 13), key='sb_ind_month', label_visibility="collapsed")
+        # [중요] 세션 상태 즉시 반영
         st.session_state.indiv_view_month = st.session_state.sb_ind_month
     with c_prev: st.button("◀", key="i_prev_btn", on_click=prev_month_indiv)
     with c_next: st.button("▶", key="i_next_btn", on_click=next_month_indiv)
