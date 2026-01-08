@@ -48,7 +48,7 @@ def prev_month_indiv():
         st.session_state.indiv_view_month = 12
     else:
         st.session_state.indiv_view_month -= 1
-    # Selectbox 동기화
+    # [수정] 버튼 클릭 시 Selectbox Key 강제 동기화 (작동 수리)
     st.session_state.sb_ind_year = st.session_state.indiv_view_year
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
@@ -58,7 +58,7 @@ def next_month_indiv():
         st.session_state.indiv_view_month = 1
     else:
         st.session_state.indiv_view_month += 1
-    # Selectbox 동기화
+    # [수정] 버튼 클릭 시 Selectbox Key 강제 동기화 (작동 수리)
     st.session_state.sb_ind_year = st.session_state.indiv_view_year
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
@@ -441,7 +441,21 @@ def save_work_history(df_new):
         df_old = df_old[required_cols]
         
         df_combined = pd.concat([df_old, df_new])
-        df_final = df_combined.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
+        # 감차휴무 처리 로직
+        # 1. 실제 근무 기록이 있는 (날짜, 이름) 조합을 찾음
+        actually_worked = df_combined[df_combined['shift'] != '감차휴무'][['date', 'name']].drop_duplicates()
+        actually_worked['worked_flag'] = True
+        
+        # 2. 원본 데이터와 합쳐서 근무 여부 플래그를 달아줌
+        df_merged = pd.merge(df_combined, actually_worked, on=['date', 'name'], how='left')
+        
+        # 3. 근무 플래그가 True인데 shift가 '감차휴무'인 행을 필터링하여 제거
+        df_final = df_merged[~((df_merged['worked_flag'] == True) & (df_merged['shift'] == '감차휴무'))]
+        
+        # 4. 최종적으로 중복 제거 및 정렬
+        if 'worked_flag' in df_final.columns:
+            df_final = df_final.drop(columns=['worked_flag'])
+        df_final = df_final.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
         
     df_final = df_final.sort_values(by=['date', 'name'])
     
@@ -1208,22 +1222,12 @@ def render_individual_calendar_tab():
             st.session_state.indiv_view_month = st.session_state.sb_ind_month; st.rerun()
 
     with c_prev: 
-        if st.button("◀", key="i_prev_btn"):
-            if st.session_state.indiv_view_month == 1:
-                st.session_state.indiv_view_year -= 1
-                st.session_state.indiv_view_month = 12
-            else:
-                st.session_state.indiv_view_month -= 1
-            st.rerun()
+        # [수정] 콜백 함수 연결 (작동 수리 완료)
+        st.button("◀", key="i_prev_btn", on_click=prev_month_indiv)
             
     with c_next: 
-        if st.button("▶", key="i_next_btn"):
-            if st.session_state.indiv_view_month == 12:
-                st.session_state.indiv_view_year += 1
-                st.session_state.indiv_view_month = 1
-            else:
-                st.session_state.indiv_view_month += 1
-            st.rerun()
+        # [수정] 콜백 함수 연결 (작동 수리 완료)
+        st.button("▶", key="i_next_btn", on_click=next_month_indiv)
     
     st.divider()
 
@@ -1318,10 +1322,11 @@ def render_individual_calendar_tab():
                             else:
                                 txt = "-"
 
+                        # [수정] 박스 안 글자 벗어남 방지 (min-height, height:auto, word-break 추가)
                         st.markdown(f"""
-                        <div style='background-color:{cell_bg}; border:1px solid #ddd; border-radius:5px; height:80px; padding:5px; display:flex; flex-direction:column; align-items:center; justify-content:center;'>
+                        <div style='background-color:{cell_bg}; border:1px solid #ddd; border-radius:5px; min-height:80px; height:auto; padding:5px; display:flex; flex-direction:column; align-items:center; justify-content:center; word-break: keep-all;'>
                             <div style='font-weight:bold; font-size:14px; margin-bottom:3px; color:{'white' if cell_bg!='#fff' and cell_bg!='white' and cell_bg!='transparent' else 'black'};'>{day}</div>
-                            <div style='text-align:center;'>{txt}</div>
+                            <div style='text-align:center; width:100%;'>{txt}</div>
                         </div>""", unsafe_allow_html=True)
 
 def render_view_manage_tab():
