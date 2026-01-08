@@ -743,11 +743,6 @@ def render_calendar_tab():
     except Exception: st.error("캘린더 렌더링 오류"); st.code(traceback.format_exc())
 
 def _render_calendar_tab_unsafe():
-    # [수정] 진입 시 오늘 날짜로 초기화 보장
-    now = get_kst_now()
-    if 'view_year' not in st.session_state: st.session_state.view_year = now.year
-    if 'view_month' not in st.session_state: st.session_state.view_month = now.month
-    
     c_title, c_legend, c_view = st.columns([1, 1.5, 0.8])
     with c_title:
         st.markdown("### 📅 월간 휴무 신청 현황")
@@ -765,7 +760,9 @@ def _render_calendar_tab_unsafe():
     
     inject_custom_css()
     
-    # 세션 변수 초기화 (기존 값 유지하되 없으면 현재 시간)
+    now = get_kst_now()
+    if 'view_year' not in st.session_state: st.session_state.view_year = now.year
+    if 'view_month' not in st.session_state: st.session_state.view_month = now.month
     if 'sb_view_year' not in st.session_state: st.session_state.sb_view_year = now.year
     if 'sb_view_month' not in st.session_state: st.session_state.sb_view_month = now.month
     
@@ -881,7 +878,7 @@ def _render_calendar_tab_unsafe():
             for i, day in enumerate(week):
                 with cols[i]:
                     if day == 0: st.markdown("<div class='calendar-day-box' style='background:#f8f9fa;'></div>", unsafe_allow_html=True)
-                    else: st.markdown(get_day_html(day, False), unsafe_allow_html=True)
+                    else: st.markdown(get_day_html(d, False), unsafe_allow_html=True)
 
 def render_individual_calendar_tab():
     st.subheader("👤 승무원별 월간 근무 현황 (통합)")
@@ -893,7 +890,7 @@ def render_individual_calendar_tab():
     if df_plan.empty or 'date' not in df_plan.columns: df_plan = pd.DataFrame(columns=['date', 'name', 'type', 'note'])
         
     df_work = load_data("work_history")
-    required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix']
+    required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub']
     if df_work.empty: df_work = pd.DataFrame(columns=required_cols)
     else:
         for c in required_cols:
@@ -902,11 +899,9 @@ def render_individual_calendar_tab():
     # 감차 규칙 로드
     reduction_rules = get_reduction_rules()
 
-    # [수정] 진입 시 오늘 날짜로 초기화 보장
     now = get_kst_now()
     if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now.year
     if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now.month
-    
     if 'sb_ind_year' not in st.session_state: st.session_state.sb_ind_year = now.year
     if 'sb_ind_month' not in st.session_state: st.session_state.sb_ind_month = now.month
     
@@ -937,13 +932,8 @@ def render_individual_calendar_tab():
         filter_ym = f"{year}-{month:02d}"
         
         my_plan = df_plan[(df_plan['name']==target) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
-        # [수정] 본인의 근무 기록 필터링
         my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
         
-        # [추가] 본인이 '원래(orig_fix)' 타야 했던 차량 기록 필터링 (감차 확인용)
-        # 전체 work_history에서 orig_fix가 나인 경우를 찾음
-        my_fixed_work = df_work[(df_work['orig_fix']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
-
         if not my_work.empty and 'shift' in my_work.columns:
             stats_am = len(my_work[my_work['shift'] == '오전'])
             stats_pm = len(my_work[my_work['shift'] == '오후'])
@@ -995,25 +985,10 @@ def render_individual_calendar_tab():
                         cell_bg = "transparent"
                         txt = ""
                         
-                        # 내 실제 근무 기록 (없을 수도 있음)
                         p_work = my_work[my_work['date'] == d_str] if not my_work.empty else pd.DataFrame()
-                        # 내 계획된 휴무 일정 (없을 수도 있음)
                         p_plan = my_plan[my_plan['date'] == d_str] if not my_plan.empty else pd.DataFrame()
-                        # 내가 원래 탔어야 할 차 기록 (감차 여부 확인용)
-                        p_fixed = my_fixed_work[my_fixed_work['date'] == d_str] if not my_fixed_work.empty else pd.DataFrame()
                         
-                        # [감차 확인 로직]
-                        # 내가 원래 배정된 차량(orig_fix)이 감차 대상인지 확인
-                        is_my_car_gamcha = False
-                        gamcha_info = ""
-                        for _, f_row in p_fixed.iterrows():
-                            if is_reduction_target(d_str, f_row['route'], f_row['seq'], reduction_rules):
-                                is_my_car_gamcha = True
-                                gamcha_info = f"{f_row['route']} {f_row['seq']}번"
-                                break
-
                         if not p_work.empty:
-                            # 1. 실제 근무를 한 경우
                             w_row = p_work.iloc[0]
                             is_sub = (str(w_row['is_sub']).upper() == 'Y')
                             
@@ -1022,39 +997,23 @@ def render_individual_calendar_tab():
                             elif w_row['shift'] == '오후': cell_bg = "#e53935" 
                             if is_sub: cell_bg = "#8e24aa"
                             
-                            # 현재 운행한 차가 감차 대상인지 확인 (기존 로직)
-                            current_car_gamcha = is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules)
-                            
-                            # 뱃지 표시: 현재 차가 감차 대상이거나, 내 원래 차가 감차 대상인 경우
+                            # [추가] 감차 뱃지
                             reduction_badge = ""
-                            if current_car_gamcha:
-                                reduction_badge = "<br><span style='color:yellow; font-weight:bold; font-size:10px;'>⛔ 감차차량운행</span>"
-                            elif is_my_car_gamcha:
-                                # 나는 일했지만 내 원래 차는 감차됨 (즉, 다른 차 탔음)
-                                reduction_badge = f"<br><span style='color:#FFCC80; font-weight:bold; font-size:10px;'>⚠️ 본인차감차<br>({gamcha_info})</span>"
+                            if is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules):
+                                reduction_badge = "<br><span style='color:yellow; font-weight:bold; font-size:10px;'>⛔ 감차대상</span>"
                             
                             txt = f"""<span style='color:white; font-weight:bold; font-size:11px;'>{w_row['route']} {w_row['seq']}번<br>({w_row['car']})</span><br>
                                       <span style='font-size:12px; color:white; font-weight:bold;'>{w_row['shift']}</span>{reduction_badge}"""
                             
                         elif not p_plan.empty:
-                            # 2. 휴무/교육 등 일정이 있는 경우
                             pl_row = p_plan.iloc[0]
                             t = pl_row['type']
                             if t == "휴무": cell_bg = "#00592D"; txt = "<span style='color:white;'>휴무</span>"
                             else: cell_bg = get_type_color(t); txt = f"<span style='color:white;'>{t}</span>"
-                            
                         else:
-                            # 3. 근무 기록도 없고, 일정 등록도 안 된 경우 (보통 휴무일)
-                            # 여기서 감차 여부를 체크해서 표시
-                            if is_my_car_gamcha:
-                                # 근무 안함 + 내 차 감차 -> 감차 휴무
-                                cell_bg = "#37474F" # 짙은 회색
-                                txt = f"<span style='color:white; font-weight:bold;'>휴무(감차)</span><br><span style='color:#CFD8DC; font-size:10px;'>{gamcha_info}</span>"
-                            else:
-                                # 일반 자동 스케줄 표시
-                                if auto == "오전": cell_bg="#e3f2fd"; txt=f"<span style='color:blue;'>오전 ({grp})</span>"
-                                elif auto == "오후": cell_bg="#fff3e0"; txt=f"<span style='color:red;'>오후 ({grp})</span>"
-                                elif auto == "휴무": cell_bg="#f1f3f5"; txt=f"<span style='color:#999;'>휴무 ({grp})</span>"
+                            if auto == "오전": cell_bg="#e3f2fd"; txt=f"<span style='color:blue;'>오전 ({grp})</span>"
+                            elif auto == "오후": cell_bg="#fff3e0"; txt=f"<span style='color:red;'>오후 ({grp})</span>"
+                            elif auto == "휴무": cell_bg="#f1f3f5"; txt=f"<span style='color:#999;'>휴무 ({grp})</span>"
                             
                         st.markdown(f"""
                         <div style='background-color:{cell_bg}; border:1px solid #ddd; border-radius:5px; min-height:80px; height:auto; padding:5px; display:flex; flex-direction:column; justify-content:center; align-items:center;'>
@@ -1066,7 +1025,6 @@ def main():
     st.set_page_config(page_title="우진교통 배차 관리 시스템", layout="wide")
     inject_custom_css()
     
-    # [수정] 메인 함수 시작 시 현재 날짜를 세션 상태의 기본값으로 확실히 설정
     now = get_kst_now()
     if 'view_year' not in st.session_state: st.session_state.view_year = now.year
     if 'view_month' not in st.session_state: st.session_state.view_month = now.month
