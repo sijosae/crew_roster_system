@@ -48,7 +48,7 @@ def prev_month_indiv():
         st.session_state.indiv_view_month = 12
     else:
         st.session_state.indiv_view_month -= 1
-    # [수정] 버튼 클릭 시 Selectbox Key 강제 동기화 (작동 수리)
+    # [수정] Selectbox 동기화 (화살표 작동 수리)
     st.session_state.sb_ind_year = st.session_state.indiv_view_year
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
@@ -58,7 +58,7 @@ def next_month_indiv():
         st.session_state.indiv_view_month = 1
     else:
         st.session_state.indiv_view_month += 1
-    # [수정] 버튼 클릭 시 Selectbox Key 강제 동기화 (작동 수리)
+    # [수정] Selectbox 동기화 (화살표 작동 수리)
     st.session_state.sb_ind_year = st.session_state.indiv_view_year
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
@@ -510,7 +510,7 @@ def get_type_color(type_name):
         "휴직": "#D2691E", "육아휴직": "#D2691E", "기타": "#363636",
         "실제근무_본인": "#1e88e5", # 파랑
         "실제근무_대운": "#8e24aa",  # 보라
-        "감차휴무": "#6c757d" # 회색
+        "감차휴무": "#00592D" # 녹색 (휴무와 동일)
     }
     return colors.get(type_name, "#546E7A")
 
@@ -1305,28 +1305,41 @@ def render_individual_calendar_tab():
                             elif w_row['shift'] == '오후': cell_bg = "#e53935" 
                             
                             if is_sub: cell_bg = "#8e24aa"
-                            
-                            txt = f"""<span style='color:white; font-weight:bold; font-size:11px;'>{w_row['route']} {w_row['seq']}번<br>({w_row['car']})</span><br>
-                                      <span style='font-size:12px; color:white; font-weight:bold;'>{w_row['shift']}</span>"""
+
+                            if w_row['shift'] == '감차휴무':
+                                cell_bg = "#00592D" # 녹색 배경
+                                txt = "<span style='color:white; font-weight:bold;'>감차휴무</span>"
+                            else:
+                                # [수정] 줄간격(line-height) 줄이고 텍스트 간격 조정
+                                txt = f"""<div style='line-height:1.1;'><span style='color:white; font-weight:bold; font-size:11px;'>{w_row['route']} {w_row['seq']}번<br>({w_row['car']})</span><br>
+                                          <span style='font-size:12px; color:white; font-weight:bold;'>{w_row['shift']}</span></div>"""
                             
                         elif not p_plan.empty:
                             pl_row = p_plan.iloc[0]
                             t = pl_row['type']
-                            if t == "휴무": cell_bg = "#00592D"; txt = "<span style='color:white;'>휴무</span>"
-                            else: cell_bg = get_type_color(t); txt = f"<span style='color:white;'>{t}</span>"
+                            # [수정] 사유가 있으면 같이 표시, 줄간격 조정
+                            n_note = f"<br>({pl_row['note']})" if pl_row['note'] else ""
+                            if t == "휴무": 
+                                cell_bg = "#00592D"; 
+                                txt = f"<div style='line-height:1.1;'><span style='color:white; font-weight:bold;'>휴무</span><span style='font-size:10px; color:white;'>{n_note}</span></div>"
+                            else: 
+                                cell_bg = get_type_color(t); 
+                                txt = f"<div style='line-height:1.1;'><span style='color:white; font-weight:bold;'>{t}</span><span style='font-size:10px; color:white;'>{n_note}</span></div>"
                         else:
-                            # 엑셀 데이터는 있는데 내 근무가 없으면 휴무로 간주
-                            if not df_work.empty:
-                                cell_bg = "#00592D"
-                                txt = "<span style='color:white; font-weight:bold;'>휴무</span>"
-                            else:
-                                txt = "-"
-
-                        # [수정] 박스 안 글자 벗어남 방지 (min-height, height:auto, word-break 추가)
+                            # [수정] 일반 휴무는 회색으로 확실하게 표시
+                            if auto == "휴무":
+                                cell_bg = "#f1f3f5" # 연한 회색 배경
+                                txt = f"<span style='color:#999; font-weight:bold; font-size:11px;'>휴무<br>({grp})</span>"
+                            elif auto == "오전": 
+                                cell_bg="#e3f2fd"; txt=f"<span style='color:blue; font-size:11px;'>오전 ({grp})</span>"
+                            elif auto == "오후": 
+                                cell_bg="#fff3e0"; txt=f"<span style='color:red; font-size:11px;'>오후 ({grp})</span>"
+                        
+                        # [수정] 박스 안 글자 벗어남 방지 (min-height, height:auto, word-break 추가) + 줄간격 제어
                         st.markdown(f"""
                         <div style='background-color:{cell_bg}; border:1px solid #ddd; border-radius:5px; min-height:80px; height:auto; padding:5px; display:flex; flex-direction:column; align-items:center; justify-content:center; word-break: keep-all;'>
-                            <div style='font-weight:bold; font-size:14px; margin-bottom:3px; color:{'white' if cell_bg!='#fff' and cell_bg!='white' and cell_bg!='transparent' else 'black'};'>{day}</div>
-                            <div style='text-align:center; width:100%;'>{txt}</div>
+                            <div style='font-weight:bold; font-size:14px; margin-bottom:2px; color:{'white' if cell_bg!='#f1f3f5' and cell_bg!='transparent' else 'black'};'>{day}</div>
+                            <div style='text-align:center; width:100%; line-height:1.1;'>{txt}</div>
                         </div>""", unsafe_allow_html=True)
 
 def render_view_manage_tab():
