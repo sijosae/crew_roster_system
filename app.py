@@ -13,12 +13,12 @@ import re
 import io
 
 # ==========================================
-# 0. 전역 상수 및 헬퍼 함수 (최상단 배치)
+# 0. 전역 상수 및 헬퍼 함수 (최상단)
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 
-# [핵심 수정 3번 해결] is_holiday 함수를 최상단으로 이동하여 NameError 방지
+# [에러 방지] 함수 최상단 배치
 kr_holidays = holidays.KR()
 def is_holiday(date_obj):
     return date_obj in kr_holidays
@@ -26,7 +26,7 @@ def is_holiday(date_obj):
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# [버튼 콜백] 세션 상태 강제 동기화
+# [기능 수정] 버튼 클릭 시 세션 상태 강제 동기화 (버튼 먹통 해결)
 def prev_cal_callback():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
@@ -63,21 +63,16 @@ def next_month_indiv():
     st.session_state.sb_ind_year = st.session_state.indiv_view_year
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
-# [초기화] 세션 스테이트
-if 'system_logs' not in st.session_state: st.session_state['system_logs'] = []
-if 'action_logs' not in st.session_state: st.session_state['action_logs'] = []
-if 'last_error_msg' not in st.session_state: st.session_state['last_error_msg'] = None
-
-# [초기화] 날짜 (오늘 날짜로 고정)
+# [기능 수정] 초기화면 오늘 날짜로 고정
 now_init = get_kst_now()
 if 'view_year' not in st.session_state: st.session_state.view_year = now_init.year
 if 'view_month' not in st.session_state: st.session_state.view_month = now_init.month
 if 'indiv_view_year' not in st.session_state: st.session_state.indiv_view_year = now_init.year
 if 'indiv_view_month' not in st.session_state: st.session_state.indiv_view_month = now_init.month
-if 'sb_view_year' not in st.session_state: st.session_state.sb_view_year = now_init.year
-if 'sb_view_month' not in st.session_state: st.session_state.sb_view_month = now_init.month
-if 'sb_ind_year' not in st.session_state: st.session_state.sb_ind_year = now_init.year
-if 'sb_ind_month' not in st.session_state: st.session_state.sb_ind_month = now_init.month
+
+if 'system_logs' not in st.session_state: st.session_state['system_logs'] = []
+if 'action_logs' not in st.session_state: st.session_state['action_logs'] = []
+if 'last_error_msg' not in st.session_state: st.session_state['last_error_msg'] = None
 
 def add_log(msg, ids=None, sheet_name=None, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -229,7 +224,7 @@ def add_company_event(date, title):
     return 
 
 # ==========================================
-# 4. 분석 엔진 (감차/엑셀)
+# 4. 분석 엔진
 # ==========================================
 def clean_driver_name(name):
     if pd.isna(name): return "" 
@@ -347,6 +342,7 @@ def get_group_from_dict(history_dict, name, target_date_str):
     return None
 
 def get_type_color(type_name):
+    # [복구] 기존 색상표 (근무_오전 등 제거)
     colors = { "휴무": "#00592D", "교육": "#8c6b4a", "경조사": "#1F3994", "징계": "#000000", "당일 해지": "#8B0000", "병가": "#A52A2A", "휴직": "#D2691E", "기타": "#363636" }
     return colors.get(type_name, "#546E7A")
 
@@ -426,7 +422,16 @@ def inject_custom_css():
         .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
         .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
-        .calendar-day-box { border: 1px solid #e9ecef; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
+        
+        /* [복구] 원본 박스 디자인 유지 */
+        .calendar-day-box { 
+            border: 1px solid #e9ecef; 
+            min-height: 120px; 
+            padding: 0; 
+            background-color: white; 
+            display: flex; flex-direction: column; 
+            height: auto !important; 
+        }
         .calendar-day-box-horiz { flex: 0 0 90px; } 
         .calendar-day-box-grid { width: 100%; margin: 2px; }
         .horizontal-scroll-container::-webkit-scrollbar { height: 8px; }
@@ -453,34 +458,36 @@ def render_calendar_tab():
     c_title, c_legend, c_view = st.columns([1, 1.5, 0.8])
     with c_title: st.markdown("### 📅 월간 휴무 신청 현황")
     with c_legend:
+        # [복구] 기존 범례 (근무_오전 등 제외)
         st.markdown("".join([f"<span style='background:{get_type_color(t)}; color:white; padding:2px 6px; margin-right:4px; border-radius:4px; font-size:10px;'>{t}</span>" for t in ["휴무","교육","경조사","병가","연차"]]), unsafe_allow_html=True)
     with c_view: view_mode = st.radio("보기", ["가로 스크롤", "달력"], horizontal=True, label_visibility="collapsed")
     inject_custom_css()
     now = get_kst_now()
     
+    # [수정] index 자동 계산 (오늘 날짜)
     c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
-    with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
+    with c1: st.markdown("<div style='padding-top:10px; text-align:right; font-weight:bold;'>년도:</div>", unsafe_allow_html=True)
     with c2: 
         years = list(range(2023, now.year + 3))
-        # [수정] index 자동 계산 (오늘 연도)
         try: idx = years.index(st.session_state.view_year)
         except: idx = 1
         st.selectbox("년도", years, index=idx, key='sb_view_year', label_visibility="collapsed")
         if st.session_state.sb_view_year != st.session_state.view_year:
             st.session_state.view_year = st.session_state.sb_view_year; st.rerun()
 
-    with c3: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
+    with c3: st.markdown("<div style='padding-top:10px; text-align:right; font-weight:bold;'>월:</div>", unsafe_allow_html=True)
     with c4: 
-        # [수정] index 자동 계산 (오늘 월)
         st.selectbox("월", range(1, 13), index=st.session_state.view_month-1, key='sb_view_month', label_visibility="collapsed")
         if st.session_state.sb_view_month != st.session_state.view_month:
             st.session_state.view_month = st.session_state.sb_view_month; st.rerun()
 
+    # [수정] 버튼 콜백 함수 연결
     with c5: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
     with c6: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
     with c7:
         if st.session_state.get('auth_status') == 'admin':
-            if st.button("➕ 빠른 입력", type="primary", use_container_width=True): show_input_dialog()
+            if st.button("➕ 빠른 입력", type="primary"): show_input_dialog()
+
     st.divider()
     
     year, month = st.session_state.view_year, st.session_state.view_month
@@ -522,6 +529,7 @@ def render_calendar_tab():
         html += f'<div class="day-header"><div style="display:flex; justify-content:space-between; padding:0 3px;"><span style="font-weight:bold; color:{day_color};">{day}일({WEEKDAY_KOREAN[wd_idx]})</span><span style="font-size:11px;">{len(today_sch)}명</span></div>'
         html += f'<div class="group-info-box">{get_daily_shift_summary(d_str)}</div></div>'
         if is_horiz: html += f'<div class="daily-stats-box" title="{full_stat}">{short_stat}</div>'
+        
         html += '<div class="event-container">'
         if not today_evt.empty:
             for _, e in today_evt.iterrows(): html += f"<div style='background:#E3F2FD; color:#1565C0; font-size:10px; text-align:center;'>{e['title']}</div>"
@@ -613,15 +621,14 @@ def render_individual_calendar_tab():
         for c in required_cols: 
             if c not in df_work.columns: df_work[c] = ""
     
-    red_rules = get_reduction_rules() # 감차 규칙 로드
     now = get_kst_now()
     c_nm, c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([2, 0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
     
     with c_nm: target = st.selectbox("승무원 선택", drivers['name'].tolist(), key='sel_driver', label_visibility="collapsed")
     with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c_yr: 
-        years = list(range(2023, now.year + 3))
         # [수정] index 자동 계산 (오늘 연도)
+        years = list(range(2023, now.year + 3))
         try: idx = years.index(st.session_state.indiv_view_year)
         except: idx = 1
         st.selectbox("년도", years, index=idx, key='sb_ind_year', label_visibility="collapsed")
@@ -645,10 +652,8 @@ def render_individual_calendar_tab():
         filter_ym = f"{year}-{month:02d}"
         
         my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))]
-        # 이번 달 전체 데이터 존재 여부 (엑셀 업로드 여부)
         month_data_exists = not df_work[df_work['date'].astype(str).str.startswith(filter_ym)].empty
         
-        # 통계
         cnt_am = len(my_work[my_work['shift']=='오전'])
         cnt_pm = len(my_work[my_work['shift']=='오후'])
         st.markdown(f"<div style='text-align:center; margin-bottom:10px; font-weight:bold;'>{year}년 {month}월: 오전 {cnt_am} / 오후 {cnt_pm}</div>", unsafe_allow_html=True)
@@ -669,24 +674,16 @@ def render_individual_calendar_tab():
                         txt = ""
                         
                         if not w_row.empty:
-                            # 근무 기록 있음 (파랑/빨강)
                             r = w_row.iloc[0]
-                            bg = "#E3F2FD" if r['shift']=='오전' else "#FFEBEE"
+                            bg = "#1e88e5" if r['shift']=='오전' else "#e53935"
                             txt_c = "blue" if r['shift']=='오전' else "red"
-                            
-                            # [수정] 박스 글자 잘림 방지 (white-space: normal)
-                            txt = f"<span style='font-size:12px; color:{txt_c}; font-weight:bold; white-space: normal;'>{r['route']} {r['seq']} ({r['car']})<br>{r['shift']}</span>"
-                        
+                            # [복구] 기존 텍스트 포맷 (노선/순번/차량)
+                            txt = f"<span style='font-size:12px; color:white; font-weight:bold; white-space: normal;'>{r['route']} {r['seq']} ({r['car']})<br>{r['shift']}</span>"
                         elif month_data_exists:
-                            # 엑셀 데이터는 있는데 내 기록이 없음 -> 휴무 (초록색)
-                            bg = "#E8F5E9"
-                            txt = "<span style='color:green; font-weight:bold;'>휴무</span>"
-                            # 감차 여부 (정보가 부족하여 정확도는 낮으나 규칙 참조)
-                            if is_reduction_target(d_str, "", "", red_rules):
-                                txt = "<span style='color:green; font-weight:bold;'>⛔ 감차 휴무</span>"
-                        
+                            # [기능 추가] 근무 기록 없으면 초록색 휴무 표시
+                            bg = "#00592D"
+                            txt = "<span style='color:white; font-weight:bold;'>휴무</span>"
                         else:
-                            # 데이터 자체가 없음
                             txt = "-"
 
                         # [수정] 하이라이트 박스 전체 적용
@@ -696,7 +693,7 @@ def render_individual_calendar_tab():
                         
                         st.markdown(f"""
                         <div style='background-color:{bg}; {box_style} border:1px solid #ddd; border-radius:5px; height:80px; padding:5px; display:flex; flex-direction:column; align-items:center; justify-content:center;'>
-                            <div style='font-weight:bold; font-size:14px; margin-bottom:3px; color:{'black'};'>{day}</div>
+                            <div style='font-weight:bold; font-size:14px; margin-bottom:3px; color:{'white' if bg!='#fff' and bg!='white' and bg!='transparent' else 'black'};'>{day}</div>
                             <div style='text-align:center; word-break: break-word;'>{txt}</div>
                         </div>""", unsafe_allow_html=True)
 
@@ -708,7 +705,6 @@ def render_view_manage_tab():
 def render_public_search_tab(): render_view_manage_tab() 
 
 def main():
-    # [수정] Title 복구
     st.set_page_config(page_title="우진교통 배차 관리 시스템", layout="wide")
     inject_custom_css()
     if 'auth_status' not in st.session_state: st.session_state['auth_status'] = None
@@ -731,7 +727,6 @@ def main():
             st.markdown('</div>', unsafe_allow_html=True)
         return
     
-    # [수정] 로그아웃 버튼 우측 상단 배치 & Title 복구
     c_head1, c_head2 = st.columns([8, 1])
     with c_head1: st.title(f"우진교통 배차 관리 시스템 ({st.session_state.get('user_name')}님)")
     with c_head2: 
