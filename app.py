@@ -21,14 +21,14 @@ SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해
 def get_kst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# [핵심] 버튼 클릭 시 Session State와 Selectbox Key를 동시에 동기화
+# [핵심] 버튼 클릭 시 Session State와 Selectbox Key를 동시에 강제 동기화
 def prev_cal_callback():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
         st.session_state.view_month = 12
     else:
         st.session_state.view_month -= 1
-    # Selectbox 동기화
+    # Selectbox 강제 동기화
     st.session_state.sb_view_year = st.session_state.view_year
     st.session_state.sb_view_month = st.session_state.view_month
 
@@ -38,7 +38,7 @@ def next_cal_callback():
         st.session_state.view_month = 1
     else:
         st.session_state.view_month += 1
-    # Selectbox 동기화
+    # Selectbox 강제 동기화
     st.session_state.sb_view_year = st.session_state.view_year
     st.session_state.sb_view_month = st.session_state.view_month
 
@@ -48,7 +48,7 @@ def prev_month_indiv():
         st.session_state.indiv_view_month = 12
     else:
         st.session_state.indiv_view_month -= 1
-    # Selectbox 동기화
+    # Selectbox 강제 동기화
     st.session_state.sb_ind_year = st.session_state.indiv_view_year
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
@@ -58,7 +58,7 @@ def next_month_indiv():
         st.session_state.indiv_view_month = 1
     else:
         st.session_state.indiv_view_month += 1
-    # Selectbox 동기화
+    # Selectbox 강제 동기화
     st.session_state.sb_ind_year = st.session_state.indiv_view_year
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
@@ -484,7 +484,9 @@ def get_type_color(type_name):
         "징계": "#000000", "당일 해지": "#8B0000", "병가": "#A52A2A", 
         "휴직": "#D2691E", "육아휴직": "#D2691E", "기타": "#363636",
         "실제근무_본인": "#1e88e5", # 파랑
-        "실제근무_대운": "#8e24aa"  # 보라
+        "실제근무_대운": "#8e24aa",  # 보라
+        "근무_오전": "#1e88e5", # 파랑
+        "근무_오후": "#e53935" # 빨강
     }
     return colors.get(type_name, "#546E7A")
 
@@ -648,8 +650,8 @@ def inject_custom_css():
         .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb:hover { background: #aaa; }
         .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
-        .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
-        .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
+        .group-info-box { font-size: 10px; padding: 2px 4px; background-color: transparent; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
+        .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: transparent; }
         .event-container::-webkit-scrollbar { display: none; }
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: transparent; border-bottom: 1px solid #eee; }
         
@@ -743,16 +745,17 @@ def render_calendar_tab():
     except Exception: st.error("캘린더 렌더링 오류"); st.code(traceback.format_exc())
 
 def _render_calendar_tab_unsafe():
-    # [수정] 한 줄 UI (제목, 범례, 보기방식)
+    # [수정] 범례 및 제목 배치 (가로스크롤 선택 버튼 포함)
     c_title, c_legend, c_view = st.columns([1, 1.5, 0.8])
     with c_title:
         st.markdown("### 📅 월간 휴무 신청 현황")
     with c_legend:
-        types = ["휴무", "교육", "경조사", "징계", "당일 해지", "병가", "휴직", "기타"]
+        types = ["휴무", "교육", "경조사", "징계", "당일 해지", "병가", "휴직", "기타", "근무_오전", "근무_오후"]
         legend_html = "<div style='display:flex; flex-wrap:wrap; gap:5px; align-items:center; height:100%; margin-top:10px;'>"
         for t in types:
             c = get_type_color(t)
-            legend_html += f"<span style='background:{c}; color:white; border:1px solid #333; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:bold;'>{t}</span>"
+            t_label = t.replace("근무_", "")
+            legend_html += f"<span style='background:{c}; color:white; border:1px solid #333; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:bold;'>{t_label}</span>"
         legend_html += "</div>"
         st.markdown(legend_html, unsafe_allow_html=True)
     with c_view:
@@ -764,18 +767,16 @@ def _render_calendar_tab_unsafe():
     if 'view_year' not in st.session_state: st.session_state.view_year = now.year
     if 'view_month' not in st.session_state: st.session_state.view_month = now.month
     
-    # [수정] 달력 이동 (한 줄로 배치) - UI 비율 조정
+    # [수정] 달력 이동 (한 줄로 배치)
     c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
     with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c2: st.selectbox("년도", range(2023, now.year + 3), key='sb_view_year', label_visibility="collapsed")
-    # 동기화 로직
     if st.session_state.sb_view_year != st.session_state.view_year:
         st.session_state.view_year = st.session_state.sb_view_year
         st.rerun()
 
     with c3: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
     with c4: st.selectbox("월", range(1, 13), key='sb_view_month', label_visibility="collapsed")
-    # 동기화 로직
     if st.session_state.sb_view_month != st.session_state.view_month:
         st.session_state.view_month = st.session_state.sb_view_month
         st.rerun()
@@ -789,13 +790,26 @@ def _render_calendar_tab_unsafe():
     st.divider()
     
     year, month = st.session_state.view_year, st.session_state.view_month
-    df = load_data("schedules")
-    df_month = df[df['date'].astype(str).str.startswith(f"{year}-{month:02d}")] if not df.empty else pd.DataFrame()
     
-    full_schedule_map = {}
-    if not df.empty:
-        for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
-        
+    # [중요] 실제 근무 데이터(work_history)도 로드하여 메인 달력에 표시 (Merge)
+    df_schedules = load_data("schedules")
+    if df_schedules.empty: df_schedules = pd.DataFrame(columns=['date','name','type','note'])
+    
+    df_work = load_data("work_history")
+    if df_work.empty: df_work = pd.DataFrame(columns=['date','name','shift','route'])
+    
+    # work_history를 schedules 포맷으로 변환 (shift -> type)
+    work_converted = pd.DataFrame()
+    if not df_work.empty:
+        df_work['type'] = df_work['shift'].apply(lambda x: f"근무_{x}" if x in ['오전','오후'] else x)
+        df_work['note'] = df_work.apply(lambda r: f"{r['route']} {r['seq']} ({r['car']})", axis=1)
+        work_converted = df_work[['date', 'name', 'type', 'note']]
+    
+    # 합치기 (실제 근무 우선)
+    df_month_combined = pd.concat([df_schedules, work_converted], ignore_index=True)
+    # 날짜 필터링
+    df_month = df_month_combined[df_month_combined['date'].astype(str).str.startswith(f"{year}-{month:02d}")]
+    
     df_events = load_data("company_events")
     df_events_month = df_events[df_events['date'].astype(str).str.startswith(f"{year}-{month:02d}")] if not df_events.empty else pd.DataFrame()
     
@@ -819,12 +833,11 @@ def _render_calendar_tab_unsafe():
         
         full_stat, short_stat = get_stats_optimized(d_str, all_drivers, today_sch, history_dict)
         
-        # [수정] 하이라이트 범위 확대 (박스 전체)
+        # [수정] 오늘/내일 하이라이트 (box-shadow 사용, 박스 전체 적용)
         box_style = ""
         
         if d_str == now.strftime("%Y-%m-%d"):
             box_style = "box-shadow: inset 0 0 0 2px #fbc02d; background-color: #fff9c4;" # 노랑 (오늘)
-            
         elif d_str == (now + timedelta(days=1)).strftime("%Y-%m-%d"):
             box_style = "box-shadow: inset 0 0 0 1px #ef5350; background-color: #ffebee;" # 연한 빨강 (내일)
         else:
@@ -834,7 +847,7 @@ def _render_calendar_tab_unsafe():
         if wd_idx == 6 or is_holiday(datetime(year, month, day)): day_color = "#d32f2f"
         elif wd_idx == 5: day_color = "#1976D2"
         
-        # [수정] 박스 전체에 스타일 적용
+        # [수정] 박스 전체에 스타일 적용 (style 속성에 box_style 추가)
         html = f'<div class="calendar-day-box {"calendar-day-box-horiz" if is_horiz else "calendar-day-box-grid"}" style="{box_style}">'
         html += f'<div class="day-header"><div style="display:flex; justify-content:space-between; padding:0 3px;"><span style="font-weight:bold; color:{day_color};">{day}일({WEEKDAY_KOREAN[wd_idx]})</span><span style="font-size:11px;">{len(today_sch)}명</span></div>'
         html += f'<div class="group-info-box">{get_daily_shift_summary(d_str)}</div></div>'
@@ -850,24 +863,24 @@ def _render_calendar_tab_unsafe():
             today_sch = today_sch.sort_values(by=['rank', 'name'])
             for _, row in today_sch.iterrows():
                 col = get_type_color(row['type'])
-                pre, suf, period_text = get_streak_info(full_schedule_map, row['name'], d_str, row['type'])
-                grp = get_group_from_dict(history_dict, row['name'], d_str)
-                orig = calculate_auto_shift(grp, d_str)
                 
-                orig_mk = ""
-                if orig == '오전': orig_mk = "<span style='color:#87CEEB; font-weight:bold;'>(전)</span> "
-                elif orig == '오후': orig_mk = "<span style='color:#FFB6C1; font-weight:bold;'>(후)</span> "
+                # 근무_오전/오후 인 경우 이름만 표시하거나 간단하게 표시
+                is_work = "근무" in row['type']
+                text_col = "white"
                 
-                inner = f"""<div style="position:relative; width:100%; display:flex; justify-content:center; align-items:center;">
-                    <div style="position:absolute; left:2px;">{pre}</div>
-                    <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; padding:0 14px;">{row['name']}</div>
-                    <div style="position:absolute; right:2px;">{suf}</div></div>"""
+                # 휴무일때는 Streak 표시
+                pre, suf, period_text = "", "", ""
+                if not is_work:
+                    # 전체 스케줄 맵이 필요하지만 여기선 생략하고 단순 표시
+                    pass 
                 
-                n_txt = row['note'] if row['note'] else row['type']
-                if period_text: n_txt += f" {period_text}"
+                n_txt = row['name']
+                if not is_work:
+                    if row['note']: n_txt += f" {row['note']}"
+                else:
+                    n_txt += f" ({row['note'].split()[0]})" # 노선만 표시
                 
-                sub_txt = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
-                html += f"<div class='schedule-bar bar-single' style='background:{col}; border:3px solid #222; color:white;' title='원래: {orig} ({grp})'>{inner}{sub_txt}</div>"
+                html += f"<div class='schedule-bar bar-single' style='background:{col}; border:1px solid #222; color:{text_col};' title='{row['note']}'>{n_txt}</div>"
         html += '</div>'
         return html
 
@@ -882,32 +895,11 @@ def _render_calendar_tab_unsafe():
                     it = l_map[(d_str, r)]
                     row = it['rec']
                     col = get_type_color(row['type'])
-                    pre, suf, period_text = get_streak_info(full_schedule_map, row['name'], d_str, row['type'])
                     
-                    grp = get_group_from_dict(history_dict, row['name'], d_str)
-                    orig = calculate_auto_shift(grp, d_str)
-                    orig_mk = ""
-                    if orig == '오전': orig_mk = "<span style='color:#87CEEB; font-weight:bold;'>(전)</span> "
-                    elif orig == '오후': orig_mk = "<span style='color:#FFB6C1; font-weight:bold;'>(후)</span> "
+                    # 근무 데이터 시각화 간소화
+                    disp_text = row['name']
                     
-                    inner = f"""<div style="position:relative; width:100%; display:flex; justify-content:center; align-items:center;">
-                        <div style="position:absolute; left:2px;">{pre}</div>
-                        <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; padding:0 14px;">{row['name']}</div>
-                        <div style="position:absolute; right:2px;">{suf}</div></div>"""
-                    
-                    n_txt = row['note'] if row['note'] else row['type']
-                    if period_text: n_txt += f" {period_text}"
-                    
-                    sub = f"<div style='font-size:9px; opacity:0.9;'>{orig_mk}{n_txt}</div>"
-                    
-                    cls = "bar-single"
-                    b_style = "border:3px solid #222;"
-                    if it['duration'] >= 2:
-                        if it['is_start']: cls = "bar-start"; b_style="border-top:3px solid #222; border-bottom:3px solid #222; border-left:3px solid #222;"
-                        elif it['is_end']: cls = "bar-end"; b_style="border-top:3px solid #222; border-bottom:3px solid #222; border-right:3px solid #222;"
-                        else: cls = "bar-mid"; b_style="border-top:3px solid #222; border-bottom:3px solid #222;"
-                        
-                    h_html += f"<div class='schedule-bar {cls}' style='background:{col}; {b_style} color:white;'>{inner}{sub}</div>"
+                    html += f"<div class='schedule-bar bar-single' style='background:{col}; border:1px solid #222; color:white;'>{disp_text}</div>"
                 else: h_html += "<div class='schedule-spacer'></div>"
             h_html += "</div>"
         h_html += "</div>"
@@ -917,9 +909,9 @@ def _render_calendar_tab_unsafe():
         for i, w in enumerate(WEEKDAY_KOREAN): cols[i].markdown(f"<div style='text-align:center; font-weight:bold; color:{'#d32f2f' if i==6 else '#1976D2' if i==5 else 'black'};'>{w}</div>", unsafe_allow_html=True)
         for week in calendar.monthcalendar(year, month):
             cols = st.columns(7)
-            for i, d in enumerate(week):
+            for i, day in enumerate(week):
                 with cols[i]:
-                    if d == 0: st.markdown("<div class='calendar-day-box' style='background:#f8f9fa;'></div>", unsafe_allow_html=True)
+                    if day == 0: st.markdown("<div class='calendar-day-box' style='background:#f8f9fa;'></div>", unsafe_allow_html=True)
                     else: st.markdown(get_day_html(d, False), unsafe_allow_html=True)
 
 def render_input_tab():
