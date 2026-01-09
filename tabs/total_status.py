@@ -130,14 +130,13 @@ def calculate_layout_rows(df_month):
     return layout_map, max_row
 
 # ==========================================
-# 3. 메인 렌더링 함수
+# 3. 메인 렌더링 함수 (수정됨: input_func 인자 추가)
 # ==========================================
-def render_calendar_tab():
+def render_calendar_tab(input_func=None):
     if st.session_state.get('last_error_msg'): 
         st.error("오류 발생")
         st.code(st.session_state['last_error_msg'])
     
-    # 상단 메뉴
     c_title, c_legend, c_view = st.columns([1, 1.5, 0.8])
     with c_title:
         st.markdown("### 📅 월간 휴무 신청 현황")
@@ -162,7 +161,6 @@ def render_calendar_tab():
         st.session_state.view_month = now.month
         st.session_state.sb_view_month = now.month
     
-    # 달력 이동 컨트롤
     c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
     with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c2: 
@@ -180,19 +178,19 @@ def render_calendar_tab():
     with c5: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
     with c6: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
     
-    # [수정] Import 위치 변경 (순환 참조 방지)
+    # [수정] 외부에서 전달받은 함수(input_func)를 실행하도록 변경
     with c7:
         if st.session_state.get('auth_status') == 'admin':
             if st.button("➕ 빠른 입력", type="primary", use_container_width=True): 
-                # 여기서 import 하면 에러가 나지 않습니다.
-                from tabs.input_mgr import show_input_dialog
-                show_input_dialog() 
+                if input_func:
+                    input_func()
+                else:
+                    st.warning("입력 기능 로드 실패")
             
     st.divider()
     
     year, month = st.session_state.view_year, st.session_state.view_month
     
-    # 데이터 로드
     df = utils.load_data("schedules")
     df_month = df[df['date'].astype(str).str.startswith(f"{year}-{month:02d}")] if not df.empty else pd.DataFrame()
     
