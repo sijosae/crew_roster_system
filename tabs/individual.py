@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import calendar
 from datetime import datetime
+import io
 import utils  # 공통 도구함
 
 # ==========================================
@@ -39,8 +40,6 @@ def render_individual_calendar_tab():
     
     df_plan = utils.load_data("schedules")
     df_work = utils.load_data("work_history")
-    
-    # 감차 규칙 로드 (수정된 utils에서 가져옴)
     reduction_rules = utils.get_reduction_rules()
     
     if df_work.empty:
@@ -87,23 +86,26 @@ def render_individual_calendar_tab():
     
     st.divider()
 
-    # 4. 달력 렌더링
+    # 4. 달력 및 리스트 데이터 준비
     if target:
         year, month = st.session_state.indiv_view_year, st.session_state.indiv_view_month
         filter_ym = f"{year}-{month:02d}"
         
+        # 해당 월 데이터 필터링
         my_plan = df_plan[(df_plan['name']==target) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
         my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
         
-        # 통계
-        stats_am = len(my_work[my_work['shift'] == '오전']) if not my_work.empty else 0
-        stats_pm = len(my_work[my_work['shift'] == '오후']) if not my_work.empty else 0
-        
+        # 연간 통계용
         y_filter = f"{year}-"
         y_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(y_filter))] if not df_work.empty else pd.DataFrame()
+        
+        # 통계 계산
+        stats_am = len(my_work[my_work['shift'] == '오전']) if not my_work.empty else 0
+        stats_pm = len(my_work[my_work['shift'] == '오후']) if not my_work.empty else 0
         y_am = len(y_work[y_work['shift'] == '오전']) if not y_work.empty else 0
         y_pm = len(y_work[y_work['shift'] == '오후']) if not y_work.empty else 0
         
+        # 상단 통계 배지
         st.markdown(f"""
         <div style='display:flex; justify-content:center; gap:20px; margin-bottom:15px;'>
             <div style='background:#E3F2FD; padding:10px 20px; border-radius:10px; text-align:center; border:1px solid #90CAF9;'>
@@ -117,6 +119,7 @@ def render_individual_calendar_tab():
         </div>
         """, unsafe_allow_html=True)
         
+        # 조(Group) 히스토리
         gh = utils.load_data("group_history")
         h_dict = {}
         if not gh.empty:
@@ -125,9 +128,17 @@ def render_individual_calendar_tab():
                 h_dict[r['driver_name']].append((r['start_date'], r['group_name']))
             for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
             
+        # ----------------------------------------------------
+        # 5. 달력 그리기
+        # ----------------------------------------------------
         cols = st.columns(7)
         for w in utils.WEEKDAY_KOREAN:
             cols[utils.WEEKDAY_KOREAN.index(w)].markdown(f"<div style='text-align:center; font-weight:bold;'>{w}</div>", unsafe_allow_html=True)
+        
+        # 리스트 출력을 위한 데이터 수집 리스트
+        daily_records = []
+        
+        _, last_day = calendar.monthrange(year, month)
         
         for week in calendar.monthcalendar(year, month):
             cols = st.columns(7)
@@ -137,11 +148,17 @@ def render_individual_calendar_tab():
                         st.write("")
                     else:
                         d_str = f"{year}-{month:02d}-{day:02d}"
+                        weekday_str = utils.WEEKDAY_KOREAN[datetime(year, month, day).weekday()]
+                        
                         grp = utils.get_group_from_dict(h_dict, target, d_str)
                         auto = utils.calculate_auto_shift(grp, d_str)
                         
                         cell_bg = "transparent"
                         txt_content = ""
+                        
+                        # 리스트용 변수
+                        record_type = ""
+                        record_detail = ""
                         
                         # 데이터 조회
                         p_work = my_work[my_work['date'] == d_str] if not my_work.empty else pd.DataFrame()
@@ -160,56 +177,95 @@ def render_individual_calendar_tab():
                             if w_row['shift'] == '감차휴무':
                                 cell_bg = "#00592D"
                                 txt_content = "<div style='line-height:1.2; color:white; font-weight:bold;'>🚫 감차<br>휴무</div>"
+                                record_type = "감차휴무"
+                                record_detail = "-"
                             else:
-                                # [감차 로직] 근무를 했더라도, 감차 대상 차량인지 확인
                                 is_reduction = utils.is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules)
-                                
                                 reduction_mark = ""
                                 if is_reduction or '감차' in str(w_row['car']):
                                     reduction_mark = "<div style='color:#FFEB3B; font-weight:bold; font-size:10px;'>🚫 감차운행</div>"
                                 
-                                txt_content = f"""
-                                    {reduction_mark}
-                                    <div style='font-size:11px; color:white; font-weight:bold;'>{w_row['route']}노선</div>
-                                    <div style='font-size:11px; color:white;'>{w_row['seq']}순번</div>
-                                    <div style='font-size:10px; color:white; opacity:0.9;'>({w_row['car']})</div>
-                                    <div style='font-size:12px; font-weight:bold; color:white; margin-top:2px;'>{w_row['shift']}</div>
-                                """
+                                # [수정] HTML 코드가 깨지지 않도록 한 줄로 결합
+                                txt_content = f"{reduction_mark}<div style='font-size:11px; color:white; font-weight:bold;'>{w_row['route']}노선</div><div style='font-size:11px; color:white;'>{w_row['seq']}순번</div><div style='font-size:10px; color:white; opacity:0.9;'>({w_row['car']})</div><div style='font-size:12px; font-weight:bold; color:white; margin-top:2px;'>{w_row['shift']}</div>"
+                                
+                                record_type = f"{w_row['shift']}" + (" (대타)" if is_sub else "")
+                                record_detail = f"{w_row['route']}번 {w_row['seq']}순번 ({w_row['car']})"
+                                if is_reduction: record_type += " [감차운행]"
                             
                         # [Case 2] 스케줄 신청 내역 존재
                         elif not p_plan.empty:
                             pl_row = p_plan.iloc[0]
                             t = pl_row['type']
-                            note = f"<br>({pl_row['note']})" if pl_row['note'] else ""
+                            note_txt = f"({pl_row['note']})" if pl_row['note'] else ""
                             
                             if t == "휴무": 
                                 cell_bg = "#00592D"
-                                txt_content = f"<div style='color:white; font-weight:bold;'>휴무{note}</div>"
+                                txt_content = f"<div style='color:white; font-weight:bold;'>휴무<br><span style='font-size:10px; font-weight:normal;'>{note_txt}</span></div>"
+                                record_type = "휴무(신청)"
                             else: 
                                 cell_bg = utils.get_type_color(t)
-                                txt_content = f"<div style='color:white; font-weight:bold;'>{t}{note}</div>"
+                                txt_content = f"<div style='color:white; font-weight:bold;'>{t}<br><span style='font-size:10px; font-weight:normal;'>{note_txt}</span></div>"
+                                record_type = t
+                            record_detail = pl_row['note']
                         
                         # [Case 3] 자동 계산 (데이터 없음)
                         else:
                             if auto == "휴무":
-                                cell_bg = "#f1f3f5" # 회색
+                                cell_bg = "#f1f3f5"
                                 txt_content = f"<div style='color:#999; font-weight:bold; font-size:12px;'>휴무<br>({grp})</div>"
+                                record_type = "휴무(일반)"
                             elif auto == "오전": 
                                 cell_bg="#e3f2fd"; txt_content=f"<div style='color:#1565C0; font-size:11px;'>오전 ({grp})</div>"
+                                record_type = "오전(예정)"
                             elif auto == "오후": 
                                 cell_bg="#fff3e0"; txt_content=f"<div style='color:#E65100; font-size:11px;'>오후 ({grp})</div>"
+                                record_type = "오후(예정)"
                             else:
                                 txt_content = "-"
+                                record_type = "-"
 
-                        # [HTML 렌더링 수정] 문자열을 깔끔하게 정리하여 삽입
+                        # [수정] 박스 높이 고정 (height: 100px) 및 flex 정렬
                         st.markdown(f"""
                         <div style='background-color:{cell_bg}; border:1px solid #ddd; border-radius:5px; 
-                                    min-height:80px; height:auto; padding:4px; 
+                                    height:100px; padding:2px; 
                                     display:flex; flex-direction:column; align-items:center; justify-content:center; 
-                                    word-break: keep-all; overflow:hidden;'>
-                            <div style='font-weight:bold; font-size:14px; margin-bottom:2px; width:100%; text-align:center;
+                                    overflow:hidden;'>
+                            <div style='font-weight:bold; font-size:13px; margin-bottom:2px; width:100%; text-align:center;
                                         color:{'white' if cell_bg not in ['#f1f3f5', 'transparent', '#e3f2fd', '#fff3e0'] else 'black'};'>
                                 {day}
                             </div>
                             <div style='text-align:center; width:100%; line-height:1.2;'>{txt_content}</div>
                         </div>""", unsafe_allow_html=True)
+                        
+                        # 리스트 데이터 추가
+                        daily_records.append({
+                            '날짜': d_str,
+                            '요일': weekday_str,
+                            '근무구분': record_type,
+                            '세부내용': record_detail
+                        })
+
+        # ----------------------------------------------------
+        # 6. 월간 근무 이력 리스트 및 엑셀 다운로드
+        # ----------------------------------------------------
+        st.divider()
+        st.markdown("### 📋 월간 상세 근무 이력")
+        
+        if daily_records:
+            df_list = pd.DataFrame(daily_records)
+            st.dataframe(df_list, use_container_width=True, hide_index=True)
+            
+            # 엑셀 다운로드 버튼
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_list.to_excel(writer, index=False, sheet_name='Sheet1')
+            processed_data = output.getvalue()
+            
+            st.download_button(
+                label="📥 엑셀로 다운로드",
+                data=processed_data,
+                file_name=f"{target}_{year}년{month}월_근무이력.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("데이터가 없습니다.")
