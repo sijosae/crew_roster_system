@@ -6,6 +6,7 @@ import hashlib
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+import time
 import holidays
 import re
 
@@ -29,7 +30,7 @@ def get_type_color(type_name):
         "휴직": "#D2691E", "육아휴직": "#D2691E", "기타": "#363636",
         "실제근무_본인": "#1e88e5", # 파랑
         "실제근무_대운": "#8e24aa",  # 보라
-        "감차휴무": "#00592D" # 녹색 (휴무와 동일)
+        "감차휴무": "#00592D" # 녹색
     }
     return colors.get(type_name, "#546E7A")
 
@@ -110,31 +111,194 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 로그인 및 사용자 관리
+# 3. 데이터 저장 및 관리 함수 (누락된 함수 복구)
 # ==========================================
-def login_user(username, password):
-    df = load_data("users")
-    if df.empty: return None
-    pw_hash = make_hash(password)
-    if 'username' not in df.columns: return None
-    df['username'] = df['username'].astype(str)
-    user = df[(df['username'] == username) & (df['password'] == pw_hash)]
-    if not user.empty:
-        return user.iloc[0]['role'], user.iloc[0]['name']
-    return None
-
-def log_login_access(username, name):
-    try:
+def save_range_batch(name_list, start, end, type, shift, note):
+    dates = pd.date_range(start, end)
+    now_kst = get_kst_now()
+    created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+    base_id = now_kst.strftime("%y%m%d%H%M")
+    
+    rows_to_add = []
+    generated_ids = []
+    count = 0
+    for name in name_list:
+        for d in dates:
+            d_str = d.strftime("%Y-%m-%d")
+            row_id = f"{base_id}{count:02d}"
+            generated_ids.append(row_id)
+            rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
+            count += 1
+            
+    if rows_to_add:
         sh = get_db_connection()
+        ws = sh.worksheet("schedules")
+        ws.append_rows(rows_to_add)
+        clear_cache_after_save()
+    return len(rows_to_add), generated_ids
+
+def add_company_event(date, title):
+    sh = get_db_connection()
+    ws = sh.worksheet("company_events")
+    now_kst = get_kst_now()
+    created_at = now_kst.strftime("%Y-%m-%d")
+    row_id = now_kst.strftime("%y%m%d%H%M%S")
+    ws.append_row([row_id, date, title, created_at])
+    clear_cache_after_save()
+    return row_id
+
+def add_log(msg, ids=None, sheet_name=None, level="INFO"):
+    timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = {
+        "time": timestamp,
+        "msg": msg,
+        "level": level,
+        "ids": ids if ids else [],
+        "sheet": sheet_name,
+        "status": "active"
+    }
+    if 'action_logs' not in st.session_state:
+        st.session_state['action_logs'] = []
+    st.session_state['action_logs'].insert(0, log_entry)
+
+def delete_rows_by_ids(sheet_name, id_list):
+    if not id_list: return False
+    sh = get_db_connection()
+    ws = sh.worksheet(sheet_name)
+    col_values = ws.col_values(1) 
+    rows_to_delete = []
+    for target_id in id_list:
         try:
-            ws = sh.worksheet("access_logs")
-        except gspread.exceptions.WorksheetNotFound:
-            ws = sh.add_worksheet(title="access_logs", rows=1000, cols=4)
-            ws.append_row(["timestamp", "username", "name", "status"])
-        timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-        ws.append_row([timestamp, username, name, "Login Success"])
-        st.cache_data.clear()
+            row_idx = col_values.index(target_id) + 1
+            rows_to_delete.append(row_idx)
+        except ValueError: continue
+    rows_to_delete.sort(reverse=True)
+    for r_idx in rows_to_delete:
+        ws.delete_rows(r_idx)
+    clear_cache_after_save()
+    return True
+
+def save_work_history(df_new):
+    sh = get_db_connection()
+    try:
+        ws = sh.worksheet("work_history")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="work_history", rows=1000, cols=10)
+        ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
+
+    existing_data = ws.get_all_values()
+    df_old = pd.DataFrame()
+    if len(existing_data) > 1:
+        headers = existing_data.pop(0)
+        df_old = pd.DataFrame(existing_data, columns=headers)
+    
+    if df_old.empty:
+        df_final = df_new
+    else:
+        required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']
+        for c in required_cols:
+            if c not in df_new.columns: df_new[c] = ""
+            if c not in df_old.columns: df_old[c] = ""
+        df_new = df_new[required_cols]
+        df_old = df_old[required_cols]
+        df_combined = pd.concat([df_old, df_new])
+        df_final = df_combined.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
+        
+    df_final = df_final.sort_values(by=['date', 'name'])
+    
+    ws.clear()
+    ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
+    
+    data_to_write = df_final.fillna("").astype(str).values.tolist()
+    if data_to_write:
+        ws.append_rows(data_to_write)
+        
+    clear_cache_after_save()
+    return len(df_new)
+
+def add_driver_with_group(name, group_name, start_date="2020-01-01"):
+    sh = get_db_connection()
+    ws_drivers = sh.worksheet("drivers")
+    created_at = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        existing = ws_drivers.find(name)
+        if not existing:
+            ws_drivers.append_row(["", name, group_name, created_at, ""])
     except: pass
+    ws_history = sh.worksheet("group_history")
+    ws_history.append_row(["", name, group_name, start_date, created_at])
+    clear_cache_after_save()
+    return True
+
+def set_driver_resignation(name, r_date):
+    sh = get_db_connection()
+    ws = sh.worksheet("drivers")
+    try:
+        cell = ws.find(name)
+        if cell:
+            ws.update_cell(cell.row, 5, r_date)
+            clear_cache_after_save()
+    except: pass
+
+def delete_driver(driver_name):
+    sh = get_db_connection()
+    ws_d = sh.worksheet("drivers")
+    try:
+        cell = ws_d.find(driver_name)
+        if cell: ws_d.delete_rows(cell.row)
+    except: pass
+    ws_h = sh.worksheet("group_history")
+    try:
+        cells = ws_h.findall(driver_name)
+        for cell in reversed(cells): ws_h.delete_rows(cell.row)
+    except: pass
+    ws_s = sh.worksheet("schedules")
+    try:
+        cells = ws_s.findall(driver_name)
+        for cell in reversed(cells): ws_s.delete_rows(cell.row)
+    except: pass
+    clear_cache_after_save()
+
+def add_user_account(username, password, role, name):
+    sh = get_db_connection()
+    ws = sh.worksheet("users")
+    k_date = get_kst_now().strftime("%Y-%m-%d")
+    new_row = [username, make_hash(password), role, name, k_date]
+    ws.append_row(new_row)
+    clear_cache_after_save()
+    return True
+
+def delete_user_account(username):
+    sh = get_db_connection()
+    ws = sh.worksheet("users")
+    try:
+        cell = ws.find(username)
+        if cell:
+            ws.delete_rows(cell.row)
+            clear_cache_after_save()
+    except: pass
+
+def update_user_password(username, new_password):
+    sh = get_db_connection()
+    ws = sh.worksheet("users")
+    try:
+        cell = ws.find(username)
+        if cell:
+            ws.update_cell(cell.row, 2, make_hash(new_password))
+            clear_cache_after_save()
+            return True
+    except: pass
+    return False
+    
+def add_reduction_rule(start, end, route, seq, cond):
+    sh = get_db_connection()
+    try:
+        ws = sh.worksheet("reduction_rules")
+    except:
+        ws = sh.add_worksheet(title="reduction_rules", rows=100, cols=5)
+        ws.append_row(['start_date', 'end_date', 'route', 'sequence', 'condition'])
+    ws.append_row([str(start), str(end), str(route), str(seq), cond])
+    clear_cache_after_save()
 
 # ==========================================
 # 4. 날짜 및 스케줄 계산 로직 (감차 포함)
@@ -190,7 +354,6 @@ def get_daily_shift_summary(date_str):
     line2 = f"<div style='display:flex; justify-content:space-between; align-items:center;'><span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span><span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_pm)}</span></div>"
     return line1 + line2
 
-# [신규 추가] 감차 규칙 가져오기
 def get_reduction_rules():
     df = load_data("reduction_rules")
     rules = []
@@ -205,7 +368,6 @@ def get_reduction_rules():
             })
     return rules
 
-# [신규 추가] 감차 대상 여부 확인
 def is_reduction_target(date_str, route, seq, rules):
     try:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -217,3 +379,108 @@ def is_reduction_target(date_str, route, seq, rules):
                 if r['condition'] == 'Always': return True
                 if r['condition'] == 'Weekend/Holiday' and is_holi: return True
     return False
+
+# ==========================================
+# 5. 로그인 및 사용자 관리 (기존 유지)
+# ==========================================
+def login_user(username, password):
+    df = load_data("users")
+    if df.empty: return None
+    pw_hash = make_hash(password)
+    if 'username' not in df.columns: return None
+    df['username'] = df['username'].astype(str)
+    user = df[(df['username'] == username) & (df['password'] == pw_hash)]
+    if not user.empty:
+        return user.iloc[0]['role'], user.iloc[0]['name']
+    return None
+
+def log_login_access(username, name):
+    try:
+        sh = get_db_connection()
+        try:
+            ws = sh.worksheet("access_logs")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="access_logs", rows=1000, cols=4)
+            ws.append_row(["timestamp", "username", "name", "status"])
+        timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+        ws.append_row([timestamp, username, name, "Login Success"])
+        st.cache_data.clear()
+    except: pass
+
+def parse_roster_excel(file):
+    df_raw = pd.read_excel(file, header=None)
+    date_rows = []
+    for idx, row in df_raw.iterrows():
+        val = str(row[0])
+        if "202" in val or "년" in val:
+            try:
+                if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
+                    date_rows.append(idx)
+            except: pass
+            
+    extracted_data = []
+    
+    for start_row in date_rows:
+        try:
+            year = int(str(df_raw.iloc[start_row, 0]).replace("년","").strip())
+            month = int(str(df_raw.iloc[start_row, 3]).replace("월","").strip())
+            day = int(str(df_raw.iloc[start_row, 5]).replace("일","").strip())
+            current_date = datetime(year, month, day).strftime("%Y-%m-%d")
+        except: continue 
+
+        cols_map = [
+            {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7}, # Left
+            {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15} # Right
+        ]
+        
+        for side in cols_map:
+            last_route = None
+            for r_offset in range(3, 75): 
+                curr_idx = start_row + r_offset
+                if curr_idx >= len(df_raw): break
+                
+                raw_route = df_raw.iloc[curr_idx, side['route']]
+                if pd.notnull(raw_route) and str(raw_route).strip() != "":
+                    last_route = str(raw_route).strip()
+                current_route = last_route if last_route else ""
+
+                raw_seq = df_raw.iloc[curr_idx, side['seq']]
+                raw_car = df_raw.iloc[curr_idx, side['car']]
+                
+                current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
+                
+                try:
+                    raw_car_str = str(raw_car).strip()
+                    digits_only = re.sub(r'[^0-9]', '', raw_car_str)
+                    car_num = int(digits_only)
+                    is_valid_car = (5001 <= car_num <= 5300)
+                    current_car = str(car_num)
+                except:
+                    is_valid_car = False
+                    current_car = ""
+
+                if not (current_route and current_seq and is_valid_car):
+                    continue
+                
+                am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
+                am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
+                am_final = am_sub if am_sub else am_fix
+                
+                pm_fix = clean_driver_name(df_raw.iloc[curr_idx, side['pm_fix']])
+                pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
+                pm_final = pm_sub if pm_sub else pm_fix
+                
+                if am_final: 
+                    extracted_data.append({
+                        'date': current_date, 'name': am_final, 'shift': '오전', 
+                        'route': current_route, 'seq': current_seq, 'car': current_car, 
+                        'is_sub': bool(am_sub), 'orig_fix': am_fix
+                    })
+                
+                if pm_final:
+                    extracted_data.append({
+                        'date': current_date, 'name': pm_final, 'shift': '오후', 
+                        'route': current_route, 'seq': current_seq, 'car': current_car, 
+                        'is_sub': bool(pm_sub), 'orig_fix': pm_fix
+                    })
+    return pd.DataFrame(extracted_data)
