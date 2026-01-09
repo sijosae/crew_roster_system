@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io  # [추가] 엑셀 변환을 위한 모듈
 import utils
 
 def _get_history_dict():
@@ -51,8 +52,7 @@ def _render_search_logic(is_admin=False):
         
         df['orig_shift'] = orig_shifts
         
-        # 4. 컬럼 선택 및 순서 재배치 (요청사항 반영)
-        # 날짜, 이름, 구분, 원래 근무, 비고 순서
+        # 4. 컬럼 선택 및 순서 재배치
         display_cols = ['date', 'name', 'type', 'orig_shift', 'note']
         
         df_display = df[display_cols].copy()
@@ -69,6 +69,20 @@ def _render_search_logic(is_admin=False):
             use_container_width=True, 
             hide_index=True
         )
+        
+        # 8. [추가] 엑셀 다운로드 버튼
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_display.to_excel(writer, index=False, sheet_name='조회결과')
+        processed_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 엑셀로 다운로드",
+            data=processed_data,
+            file_name="배차조회결과.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
     else:
         st.info("검색 결과가 없습니다.")
 
