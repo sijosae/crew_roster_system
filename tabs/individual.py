@@ -43,7 +43,6 @@ def calculate_real_stats(df_work, reduction_rules, h_dict, target_name):
         is_sub = (str(row['is_sub']).upper() in ['Y', 'TRUE'])
         car_is_red = '감차' in str(row['car'])
         
-        # 감차 대상이고 대운(대타)이 아니면 근무 제외
         if (is_red or car_is_red) and not is_sub:
             continue
             
@@ -58,41 +57,30 @@ def calculate_real_stats(df_work, reduction_rules, h_dict, target_name):
 def render_individual_calendar_tab():
     st.subheader("👤 승무원별 월간 근무 현황 (통합)")
     
-    # [CSS 강력 수정] 모바일/아이폰 사파리 가로 고정
+    # 모바일 세로 배치 유지
     st.markdown("""
     <style>
     @media (max-width: 640px) {
-        /* [핵심] 상위 컨테이너가 세로로 바뀌는 것을 강제로 가로로 고정 */
-        div[data-testid="stHorizontalBlock"] {
-            flex-direction: row !important;
-            flex-wrap: nowrap !important;
-        }
-        /* 컬럼 너비 강제 */
-        div[data-testid="column"] {
-            flex: 1 1 0px !important; 
-            width: 14.28% !important;
-            min-width: 0px !important;
-            padding: 1px !important;
-        }
-        /* 박스 내부 폰트 및 높이 */
         .cal-content-box {
-            font-size: 9px !important;
-            min-height: 65px !important;
-            padding: 1px !important;
-            line-height: 1.1 !important;
+            font-size: 14px !important;
+            min-height: 80px !important;
+            padding: 5px !important;
+            line-height: 1.4 !important;
         }
         .cal-header {
-            font-size: 10px !important;
-            margin-bottom: 2px !important;
+            font-size: 14px !important;
+            margin-bottom: 5px !important;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 2px;
         }
         .cal-badge {
-            font-size: 8px !important;
+            font-size: 11px !important;
         }
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # 1. 데이터 로드
+    # 데이터 로드
     drivers = utils.load_data("drivers")
     if drivers.empty:
         st.warning("등록된 승무원이 없습니다.")
@@ -119,7 +107,7 @@ def render_individual_calendar_tab():
 
     now = utils.get_kst_now()
 
-    # 2. 날짜 초기화
+    # 날짜 초기화
     if 'indiv_view_year' not in st.session_state: 
         st.session_state.indiv_view_year = now.year
         st.session_state.sb_ind_year = now.year
@@ -127,7 +115,6 @@ def render_individual_calendar_tab():
         st.session_state.indiv_view_month = now.month
         st.session_state.sb_ind_month = now.month
     
-    # 3. 컨트롤 패널
     c_nm, c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([2, 0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
     
     with c_nm: 
@@ -153,7 +140,6 @@ def render_individual_calendar_tab():
     
     st.divider()
 
-    # 4. 달력 렌더링
     if target:
         year, month = st.session_state.indiv_view_year, st.session_state.indiv_view_month
         filter_ym = f"{year}-{month:02d}"
@@ -201,7 +187,7 @@ def render_individual_calendar_tab():
                         
                         cell_bg = "transparent"
                         txt_content = ""
-                        border_style = "border:1px solid #ddd;"
+                        border_style = "border:1px solid #ddd;" # 기본 테두리
                         
                         rec_shift = ""
                         rec_route = "-"
@@ -214,15 +200,12 @@ def render_individual_calendar_tab():
                         # [Case 1] 근무 이력(DB) 존재
                         if not p_work.empty:
                             w_row = p_work.iloc[0]
-                            # 대운 여부
                             is_sub = (str(w_row['is_sub']).upper() in ['Y', 'TRUE'])
-                            
-                            # 감차 확인
-                            is_rule_red = utils.is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules)
-                            is_car_red = '감차' in str(w_row['car'])
-                            is_reduction = is_rule_red or is_car_red
+                            is_red = utils.is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules)
+                            car_is_red = '감차' in str(w_row['car'])
+                            is_reduction = is_red or car_is_red
 
-                            # [1] 감차 대상이고 + 대운이 아님 => 무조건 휴무
+                            # [1] 감차 대상 + 대운X => 휴무
                             if is_reduction and not is_sub:
                                 if auto == '휴무':
                                     cell_bg = "#f1f3f5"
@@ -241,18 +224,19 @@ def render_individual_calendar_tab():
                             
                             # [3] 실제 근무 (오전/오후)
                             elif w_row['shift'] in ['오전', '오후']:
-                                # [핵심 수정] 대운일 때 색상 분리 (오전:남색 / 오후:주황)
+                                # [수정] 대운자 테두리 색상 제거 (기본 테두리 사용)
+                                # border_style = "border:1px solid #ddd;" (이미 위에서 초기화됨)
+
+                                # 배경색 설정 (대운자 구분을 색상으로만)
                                 if is_sub:
-                                    border_style = "border:3px solid #8e24aa;"
-                                    if w_row['shift'] == '오전': cell_bg = "#1565C0" # 남색 (대운 오전)
-                                    else: cell_bg = "#EF6C00" # 주황 (대운 오후)
+                                    if w_row['shift'] == '오전': cell_bg = "#1565C0" # 대운 오전 (남색)
+                                    else: cell_bg = "#EF6C00" # 대운 오후 (주황)
                                 else:
-                                    # 일반 근무
-                                    if w_row['shift'] == '오전': cell_bg = "#1e88e5" 
-                                    else: cell_bg = "#e53935" 
+                                    if w_row['shift'] == '오전': cell_bg = "#1e88e5" # 일반 오전 (파랑)
+                                    else: cell_bg = "#e53935" # 일반 오후 (빨강)
                                 
                                 mark = ""
-                                if is_rule_red: 
+                                if is_red: 
                                     mark += "<div class='cal-badge' style='color:#ff4444; font-weight:bold; font-size:11px;'>🚫 감차근무</div>"
                                 
                                 sub_txt = ""
