@@ -1,5 +1,6 @@
 import streamlit as st
 import utils  # 공통 도구함
+# 탭 모듈 임포트
 from tabs import total_status, individual, input_mgr, driver_mgr, search, logs
 
 def main():
@@ -20,33 +21,15 @@ def main():
         with c2:
             st.title("우진교통 배차 관리 시스템")
             
-            # [진단 코드 시작] DB 연결 테스트
-            try:
-                test_df = utils.load_data("users")
-                if test_df.empty:
-                    st.warning("⚠️ DB 연결은 성공했으나 'users' 시트에 데이터가 없습니다.")
-                    st.info("구글 시트 'users' 탭에 admin 계정이 있는지 확인해주세요.")
-                else:
-                    st.success("✅ DB 연결 성공 (users 데이터 확인됨)")
-            except Exception as e:
-                st.error(f"❌ DB 연결 실패: {e}")
-                st.caption("secrets.toml 설정이나 인터넷 연결을 확인하세요.")
-            # [진단 코드 끝]
-
             uid = st.text_input("아이디")
             upw = st.text_input("비밀번호", type="password")
             st.markdown('<div class="login-btn">', unsafe_allow_html=True)
             
             if st.button("로그인", type="primary", use_container_width=True):
-                # 관리자 긴급 로그인 (DB오류 시 비상용)
-                if uid == "admin" and upw == "1234":
-                     st.session_state['auth_status'] = 'admin'
-                     st.session_state['user_name'] = '관리자(비상)'
-                     st.rerun()
-
+                # [수정] 비상 로그인 코드 삭제됨 -> 오직 DB 인증만 수행
                 user = utils.login_user(uid, upw)
                 if user:
-                    st.session_state['auth_status'] = user[0] # role
+                    st.session_state['auth_status'] = user[0] # role (admin/staff)
                     st.session_state['user_name'] = user[1]   # name
                     utils.log_login_access(uid, user[1])
                     st.rerun()
@@ -64,9 +47,10 @@ def main():
             st.session_state['auth_status'] = None
             st.rerun()
 
-    # 6. 권한별 탭 구성
+    # 6. 권한별 탭 구성 및 모듈 호출
     if st.session_state['auth_status'] == 'admin':
         t1, t2, t3, t4, t5, t6 = st.tabs(["📅 전체 현황", "👤 개인별", "📝 입력/배차", "⚙️ 승무원", "📊 조회", "🔧 로그"])
+        
         with t1: total_status.render_calendar_tab()
         with t2: individual.render_individual_calendar_tab()
         with t3: input_mgr.render_input_tab()
@@ -74,7 +58,9 @@ def main():
         with t5: search.render_view_manage_tab()
         with t6: logs.render_log_tab()
     else:
+        # 일반 직원용 탭 구성
         t1, t2, t3 = st.tabs(["📅 전체 현황", "👤 개인별", "📊 조회"])
+        
         with t1: total_status.render_calendar_tab()
         with t2: individual.render_individual_calendar_tab()
         with t3: search.render_public_search_tab()
