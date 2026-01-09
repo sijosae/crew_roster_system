@@ -3,8 +3,6 @@ import pandas as pd
 import calendar
 from datetime import datetime, timedelta
 import utils
-# [추가] 빠른 입력 다이얼로그 가져오기
-from tabs.input_mgr import show_input_dialog
 
 # ==========================================
 # 내부 헬퍼 함수
@@ -182,10 +180,12 @@ def render_calendar_tab():
     with c5: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
     with c6: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
     
-    # [수정] 빠른 입력 버튼 복구
+    # [수정] Import 위치 변경 (순환 참조 방지)
     with c7:
         if st.session_state.get('auth_status') == 'admin':
             if st.button("➕ 빠른 입력", type="primary", use_container_width=True): 
+                # 여기서 import 하면 에러가 나지 않습니다.
+                from tabs.input_mgr import show_input_dialog
                 show_input_dialog() 
             
     st.divider()
