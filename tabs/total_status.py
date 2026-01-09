@@ -170,14 +170,13 @@ def render_calendar_tab():
     with c3: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
     with c4: 
         st.selectbox("월", range(1, 13), index=st.session_state.view_month-1, key='sb_view_month', label_visibility="collapsed")
-        if st.session_state.sb_view_month != st.session_state.view_year:
+        # [수정 완료] 오타 수정: view_year -> view_month로 변경하여 무한루프 해결
+        if st.session_state.sb_view_month != st.session_state.view_month:
             st.session_state.view_month = st.session_state.sb_view_month; st.rerun()
 
     with c5: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
     with c6: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
     with c7:
-        # 빠른 입력 팝업은 input_mgr에 있으나, 편의상 여기서 호출하거나 app.py에서 전달받을 수 있음.
-        # 모듈화로 인해 직접 호출이 어려울 경우 탭 이동을 유도하거나, 단순 버튼만 표시
         pass 
             
     st.divider()
