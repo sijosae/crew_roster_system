@@ -153,29 +153,37 @@ def render_individual_calendar_tab():
                         p_work = my_work[my_work['date'] == d_str] if not my_work.empty else pd.DataFrame()
                         p_plan = my_plan[my_plan['date'] == d_str] if not my_plan.empty else pd.DataFrame()
                         
+                        # ==========================================================
                         # [Case 1] 근무 이력(DB) 존재
+                        # ==========================================================
                         if not p_work.empty:
                             w_row = p_work.iloc[0]
                             is_sub = (str(w_row['is_sub']).upper() == 'Y' or str(w_row['is_sub']).upper() == 'TRUE')
                             
-                            # (1-1) 감차휴무 -> 일반 휴무로 표시 (회색)
-                            if w_row['shift'] == '감차휴무':
-                                cell_bg = "#f1f3f5" # 일반 휴무 색상
+                            # 1순위: 원래 조 휴무일이면 -> 무조건 회색 '휴무'로 표시
+                            if auto == '휴무' and (w_row['shift'] == '휴무' or w_row['shift'] == '감차휴무'):
+                                cell_bg = "#f1f3f5"
                                 txt_content = f"<div style='color:#999; font-weight:bold; font-size:13px;'>휴무<br>({grp})</div>"
-                                rec_shift = "감차휴무" # 리스트에는 상세히 표시
-                                rec_route = "-"
-                                rec_seq = "-"
-                                rec_car = "-"
+                                rec_shift = "휴무(원래휴무)"
+                                rec_route, rec_seq, rec_car = "-", "-", "-"
 
-                            # (1-2) 실제 근무 (오전/오후)
+                            # 2순위: 원래 휴무가 아닌데 '감차휴무'인 경우 (강제 감차 휴무)
+                            elif w_row['shift'] == '감차휴무':
+                                cell_bg = "#00592D"
+                                txt_content = "<div style='line-height:1.2; color:white; font-weight:bold; font-size:14px;'>🚫 감차<br>휴무</div>"
+                                rec_shift = "감차휴무"
+                                rec_route, rec_seq, rec_car = "-", "-", "-"
+
+                            # 3순위: 근무 (오전/오후)
                             elif w_row['shift'] in ['오전', '오후']:
+                                # 배경색 설정
                                 if w_row['shift'] == '오전': cell_bg = "#1e88e5" 
                                 elif w_row['shift'] == '오후': cell_bg = "#e53935" 
                                 if is_sub: cell_bg = "#8e24aa"
                                 
                                 is_reduction = utils.is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules)
                                 
-                                # 감차 대상인데 근무 -> 감차근무
+                                # 감차 대상인데 근무 -> 감차근무 (노란색 경고)
                                 if is_reduction or '감차' in str(w_row['car']):
                                     mark = "<div style='color:#FFEB3B; font-weight:bold; font-size:11px;'>🚫 감차근무</div>"
                                     car_text = f"{w_row['car']}"
@@ -186,32 +194,33 @@ def render_individual_calendar_tab():
                                     rec_shift = f"{w_row['shift']}"
                                     if is_sub: rec_shift += " (대타)"
                                 
-                                # [수정] 한 줄로 연결하여 코드 노출 방지 + 시인성 개선
                                 txt_content = f"<div style='line-height:1.4; color:white;'>{mark}<div style='font-size:14px; font-weight:bold;'>{w_row['route']}노선 {w_row['seq']}순번</div><div style='font-size:13px;'>{car_text}</div><div style='font-size:14px; font-weight:bold; margin-top:2px;'>{w_row['shift']}</div></div>"
                                 
-                                rec_route = w_row['route']
-                                rec_seq = w_row['seq']
-                                rec_car = w_row['car']
+                                rec_route, rec_seq, rec_car = w_row['route'], w_row['seq'], w_row['car']
                             
-                            # (1-3) 기타 예외
                             else:
+                                # 그 외 예외 케이스
                                 cell_bg = "#00592D"
                                 txt_content = f"<div style='color:white; font-size:14px; font-weight:bold;'>{w_row['shift']}</div>"
                                 rec_shift = w_row['shift']
-                                rec_route = "-"
-                                rec_seq = "-"
-                                rec_car = "-"
+                                rec_route, rec_seq, rec_car = "-", "-", "-"
                             
+                        # ==========================================================
                         # [Case 2] 스케줄 신청 내역
+                        # ==========================================================
                         elif not p_plan.empty:
                             pl_row = p_plan.iloc[0]
                             t = pl_row['type']
-                            note_txt = f"<br><span style='font-size:12px; font-weight:normal;'>({pl_row['note']})</span>" if pl_row['note'] else ""
+                            note_txt = f"<br><span style='font-size:11px; font-weight:normal;'>({pl_row['note']})</span>" if pl_row['note'] else ""
                             
-                            # 감차휴무로 신청된 경우 -> 일반 휴무처럼 회색으로 표시
-                            if t == '감차휴무':
+                            # 여기서도 원래 휴무일이면 회색 휴무가 우선
+                            if auto == '휴무' and (t == '휴무' or t == '감차휴무'):
                                 cell_bg = "#f1f3f5"
                                 txt_content = f"<div style='color:#999; font-weight:bold; font-size:13px;'>휴무<br>({grp})</div>"
+                                rec_shift = "휴무(원래휴무)"
+                            elif t == '감차휴무':
+                                cell_bg = "#00592D"
+                                txt_content = "<div style='line-height:1.2; color:white; font-weight:bold; font-size:14px;'>🚫 감차<br>휴무</div>"
                                 rec_shift = "감차휴무"
                             elif t == "휴무": 
                                 cell_bg = "#00592D"
@@ -223,10 +232,11 @@ def render_individual_calendar_tab():
                                 rec_shift = t
                             
                             rec_route = pl_row['note']
-                            rec_seq = "-"
-                            rec_car = "-"
+                            rec_seq, rec_car = "-", "-"
                         
+                        # ==========================================================
                         # [Case 3] 자동 계산 (데이터 없음)
+                        # ==========================================================
                         else:
                             if auto == "휴무":
                                 cell_bg = "#f1f3f5"
@@ -242,9 +252,7 @@ def render_individual_calendar_tab():
                                 txt_content = "-"
                                 rec_shift = "-"
                             
-                            rec_route = "-"
-                            rec_seq = "-"
-                            rec_car = "-"
+                            rec_route, rec_seq, rec_car = "-", "-", "-"
 
                         # [렌더링]
                         st.markdown(f"""
