@@ -17,15 +17,12 @@ SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해
 kr_holidays = holidays.KR()
 
 def get_kst_now():
-    """한국 표준시(KST) 현재 시간 반환"""
     return datetime.utcnow() + timedelta(hours=9)
 
 def make_hash(password):
-    """비밀번호 해시화"""
     return hashlib.sha256(str(password).encode()).hexdigest()
 
 def get_type_color(type_name):
-    """근무/휴무 유형별 색상 반환 (디자인 유지)"""
     colors = { 
         "휴무": "#00592D", "교육": "#8c6b4a", "경조사": "#1F3994", 
         "징계": "#000000", "당일 해지": "#8B0000", "병가": "#A52A2A", 
@@ -37,63 +34,33 @@ def get_type_color(type_name):
     return colors.get(type_name, "#546E7A")
 
 def inject_custom_css():
-    """전체 인터페이스 CSS 스타일 (수정된 버전 적용)"""
     st.markdown("""
     <style>
         .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
         .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
-        
-        /* 박스 그림자 적용 및 높이 설정 */
-        .calendar-day-box { 
-            border: 1px solid #e9ecef; 
-            min-height: 200px; 
-            padding: 0; 
-            background-color: white; 
-            display: flex; 
-            flex-direction: column; 
-            height: auto !important; 
-        }
-        
+        .calendar-day-box { border: 1px solid #e9ecef; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
         .calendar-day-box-horiz { flex: 0 0 90px; } 
         .calendar-day-box-grid { width: 100%; margin: 2px; }
-        
         .horizontal-scroll-container::-webkit-scrollbar { height: 8px; }
         .horizontal-scroll-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
         .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
-        .horizontal-scroll-container::-webkit-scrollbar-thumb:hover { background: #aaa; }
-        
         .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
         .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
-        
         .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
         .event-container::-webkit-scrollbar { display: none; }
-        
         .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: transparent; border-bottom: 1px solid #eee; }
-        
         .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: none; border-bottom: none; }
         .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
         .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
         .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
-
-        /* 로그인 버튼 스타일 */
-        button[kind="primary"], div[data-testid="stButton"] button {
-            background-color: #00592D !important;
-            border-color: #00592D !important;
-            color: white !important;
-        }
-        button[kind="primary"]:hover, div[data-testid="stButton"] button:hover {
-            background-color: #004d26 !important;
-            border-color: #004d26 !important;
-            color: white !important;
-        }
-        
+        button[kind="primary"], div[data-testid="stButton"] button { background-color: #00592D !important; border-color: #00592D !important; color: white !important; }
+        button[kind="primary"]:hover, div[data-testid="stButton"] button:hover { background-color: #004d26 !important; border-color: #004d26 !important; color: white !important; }
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
     </style>
     """, unsafe_allow_html=True)
-
 
 # ==========================================
 # 2. DB 연결 및 데이터 로드 (영구 캐싱)
@@ -108,7 +75,6 @@ def get_cached_sheet_object():
             creds_dict = dict(st.secrets["gcp_service_account"])
             if "private_key" in creds_dict:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         sh = client.open("bus_schedule_db")
@@ -131,15 +97,11 @@ def load_data(sheet_name):
         if not data: return pd.DataFrame()
         headers = data.pop(0)
         df = pd.DataFrame(data, columns=headers)
-        
-        # [수정] 'users' 시트는 날짜 필터링을 절대 하지 않도록 예외 처리
         if sheet_name != 'users' and 'date' in df.columns:
             df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime("%Y-%m-%d")
             df = df.dropna(subset=['date']) 
-            
         if 'name' in df.columns:
             df['name'] = df['name'].astype(str).str.strip()
-            
         return df
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame()
@@ -175,7 +137,7 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 4. 날짜 및 스케줄 계산 로직
+# 4. 날짜 및 스케줄 계산 로직 (감차 포함)
 # ==========================================
 def is_holiday(date_obj):
     return date_obj in kr_holidays
@@ -192,7 +154,6 @@ def clean_driver_name(name):
     return s
 
 def calculate_auto_shift(group_name, target_date_str):
-    """조별 근무 패턴 계산 (10개조)"""
     if not group_name or "조" not in group_name: return None
     try:
         ref = datetime(2025, 12, 1)
@@ -205,7 +166,6 @@ def calculate_auto_shift(group_name, target_date_str):
     except: return None
 
 def get_group_from_dict(history_dict, name, target_date_str):
-    """날짜별 소속 조 찾기"""
     if name not in history_dict: return None
     records = history_dict[name]
     for start_date, group in records:
@@ -214,7 +174,6 @@ def get_group_from_dict(history_dict, name, target_date_str):
     return None
 
 def get_daily_shift_summary(date_str):
-    """하루의 전체 근무 현황 요약 (전체 캘린더용)"""
     am, pm = [], []
     off_from_am, off_from_pm = [], []
     prev_date = (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -230,3 +189,31 @@ def get_daily_shift_summary(date_str):
     line1 = f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:1px;'><span style='color:#1c7ed6; font-weight:bold;'>오전: {','.join(am)}</span><span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_am)}</span></div>"
     line2 = f"<div style='display:flex; justify-content:space-between; align-items:center;'><span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span><span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_pm)}</span></div>"
     return line1 + line2
+
+# [신규 추가] 감차 규칙 가져오기
+def get_reduction_rules():
+    df = load_data("reduction_rules")
+    rules = []
+    if not df.empty and 'start_date' in df.columns:
+        for _, row in df.iterrows():
+            rules.append({
+                'start': row['start_date'],
+                'end': row['end_date'],
+                'route': str(row['route']).strip(),
+                'seq': str(row['sequence']).strip(),
+                'condition': row['condition']
+            })
+    return rules
+
+# [신규 추가] 감차 대상 여부 확인
+def is_reduction_target(date_str, route, seq, rules):
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except: return False
+    is_holi = is_holiday_or_weekend(d)
+    for r in rules:
+        if r['start'] <= date_str <= r['end']:
+            if r['route'] == str(route).strip() and r['seq'] == str(seq).strip():
+                if r['condition'] == 'Always': return True
+                if r['condition'] == 'Weekend/Holiday' and is_holi: return True
+    return False
