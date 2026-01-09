@@ -1,6 +1,5 @@
 import streamlit as st
 import utils  # 공통 도구함
-# 탭 모듈 임포트
 from tabs import total_status, individual, input_mgr, driver_mgr, search, logs
 
 def main():
@@ -20,17 +19,15 @@ def main():
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
             st.title("우진교통 배차 관리 시스템")
-            
             uid = st.text_input("아이디")
             upw = st.text_input("비밀번호", type="password")
             st.markdown('<div class="login-btn">', unsafe_allow_html=True)
             
             if st.button("로그인", type="primary", use_container_width=True):
-                # [수정] 비상 로그인 코드 삭제됨 -> 오직 DB 인증만 수행
                 user = utils.login_user(uid, upw)
                 if user:
-                    st.session_state['auth_status'] = user[0] # role (admin/staff)
-                    st.session_state['user_name'] = user[1]   # name
+                    st.session_state['auth_status'] = user[0] 
+                    st.session_state['user_name'] = user[1]  
                     utils.log_login_access(uid, user[1])
                     st.rerun()
                 else:
@@ -47,21 +44,20 @@ def main():
             st.session_state['auth_status'] = None
             st.rerun()
 
-    # 6. 권한별 탭 구성 및 모듈 호출
+    # 6. 권한별 탭 구성
     if st.session_state['auth_status'] == 'admin':
         t1, t2, t3, t4, t5, t6 = st.tabs(["📅 전체 현황", "👤 개인별", "📝 입력/배차", "⚙️ 승무원", "📊 조회", "🔧 로그"])
         
-        with t1: total_status.render_calendar_tab()
+        # [수정] 순환 참조 해결을 위해 input_mgr의 함수를 인자로 전달
+        with t1: total_status.render_calendar_tab(input_mgr.show_input_dialog)
         with t2: individual.render_individual_calendar_tab()
         with t3: input_mgr.render_input_tab()
         with t4: driver_mgr.render_driver_manage_tab()
         with t5: search.render_view_manage_tab()
         with t6: logs.render_log_tab()
     else:
-        # 일반 직원용 탭 구성
         t1, t2, t3 = st.tabs(["📅 전체 현황", "👤 개인별", "📊 조회"])
-        
-        with t1: total_status.render_calendar_tab()
+        with t1: total_status.render_calendar_tab(None) # 일반 직원은 입력 기능 없음
         with t2: individual.render_individual_calendar_tab()
         with t3: search.render_public_search_tab()
 
