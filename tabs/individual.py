@@ -102,6 +102,7 @@ def render_individual_calendar_tab():
         y_am = len(y_work[y_work['shift'] == '오전']) if not y_work.empty else 0
         y_pm = len(y_work[y_work['shift'] == '오후']) if not y_work.empty else 0
         
+        # 상단 통계 배지
         st.markdown(f"""
         <div style='display:flex; justify-content:center; gap:20px; margin-bottom:15px;'>
             <div style='background:#E3F2FD; padding:10px 20px; border-radius:10px; text-align:center; border:1px solid #90CAF9;'>
@@ -164,26 +165,25 @@ def render_individual_calendar_tab():
 
                             if w_row['shift'] == '감차휴무':
                                 cell_bg = "#00592D"
-                                txt_content = "<div style='line-height:1.2; color:white; font-weight:bold;'>🚫 감차<br>휴무</div>"
+                                txt_content = "<div style='line-height:1.2; color:white; font-weight:bold; font-size:14px;'>🚫 감차<br>휴무</div>"
                                 rec_shift = "감차휴무"
                                 rec_route = "-"
                                 rec_seq = "-"
                                 rec_car = "-"
                             else:
-                                # 감차 여부 확인
                                 is_reduction = utils.is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules)
-                                
-                                # 차량번호 표시 (감차근무 시 강조)
                                 car_text = f"{w_row['car']}"
+                                
+                                # [수정] 감차 근무 시 표시 강화
                                 if is_reduction or '감차' in str(w_row['car']):
                                     car_text += " <span style='color:#FFEB3B; font-weight:bold;'>(감차근무)</span>"
                                 
-                                # [수정] 3줄 구성 (노선+순번 / 차량번호 / 근무)
+                                # [수정] 글자 크기 확대 (13px 이상) 및 3줄 레이아웃
                                 txt_content = f"""
-                                <div style='line-height:1.3; color:white;'>
-                                    <div style='font-size:11px; font-weight:bold;'>{w_row['route']}노선 {w_row['seq']}순번</div>
-                                    <div style='font-size:11px;'>{car_text}</div>
-                                    <div style='font-size:12px; font-weight:bold; margin-top:2px;'>{w_row['shift']}</div>
+                                <div style='line-height:1.4; color:white;'>
+                                    <div style='font-size:14px; font-weight:bold;'>{w_row['route']}노선 {w_row['seq']}순번</div>
+                                    <div style='font-size:13px;'>{car_text}</div>
+                                    <div style='font-size:14px; font-weight:bold; margin-top:2px;'>{w_row['shift']}</div>
                                 </div>
                                 """
                                 
@@ -197,15 +197,15 @@ def render_individual_calendar_tab():
                         elif not p_plan.empty:
                             pl_row = p_plan.iloc[0]
                             t = pl_row['type']
-                            note_txt = f"<br>({pl_row['note']})" if pl_row['note'] else ""
+                            note_txt = f"<br><span style='font-size:12px; font-weight:normal;'>({pl_row['note']})</span>" if pl_row['note'] else ""
                             
                             if t == "휴무": 
                                 cell_bg = "#00592D"
-                                txt_content = f"<div style='color:white; font-weight:bold;'>휴무{note_txt}</div>"
+                                txt_content = f"<div style='color:white; font-size:14px; font-weight:bold;'>휴무{note_txt}</div>"
                                 rec_shift = "휴무(신청)"
                             else: 
                                 cell_bg = utils.get_type_color(t)
-                                txt_content = f"<div style='color:white; font-weight:bold;'>{t}{note_txt}</div>"
+                                txt_content = f"<div style='color:white; font-size:14px; font-weight:bold;'>{t}{note_txt}</div>"
                                 rec_shift = t
                             
                             rec_route = pl_row['note']
@@ -216,13 +216,13 @@ def render_individual_calendar_tab():
                         else:
                             if auto == "휴무":
                                 cell_bg = "#f1f3f5"
-                                txt_content = f"<div style='color:#999; font-weight:bold; font-size:12px;'>휴무<br>({grp})</div>"
+                                txt_content = f"<div style='color:#999; font-weight:bold; font-size:13px;'>휴무<br>({grp})</div>"
                                 rec_shift = "휴무(일반)"
                             elif auto == "오전": 
-                                cell_bg="#e3f2fd"; txt_content=f"<div style='color:blue; font-size:11px;'>오전 ({grp})</div>"
+                                cell_bg="#e3f2fd"; txt_content=f"<div style='color:blue; font-size:13px;'>오전 ({grp})</div>"
                                 rec_shift = "오전(예정)"
                             elif auto == "오후": 
-                                cell_bg="#fff3e0"; txt_content=f"<div style='color:red; font-size:11px;'>오후 ({grp})</div>"
+                                cell_bg="#fff3e0"; txt_content=f"<div style='color:red; font-size:13px;'>오후 ({grp})</div>"
                                 rec_shift = "오후(예정)"
                             else:
                                 txt_content = "-"
@@ -232,13 +232,13 @@ def render_individual_calendar_tab():
                             if not rec_seq: rec_seq = "-"
                             if not rec_car: rec_car = "-"
 
-                        # 박스 렌더링
+                        # [수정] 박스 높이 유연화 (min-height, height:auto) 및 잘림 방지
                         st.markdown(f"""
                         <div style='background-color:{cell_bg}; border:1px solid #ddd; border-radius:5px; 
-                                    height:100px; padding:2px; 
+                                    min-height:100px; height:auto; padding:5px; 
                                     display:flex; flex-direction:column; align-items:center; justify-content:center; 
-                                    overflow:hidden;'>
-                            <div style='font-weight:bold; font-size:13px; margin-bottom:2px; width:100%; text-align:center;
+                                    overflow:hidden; word-break:keep-all;'>
+                            <div style='font-weight:bold; font-size:13px; margin-bottom:4px; width:100%; text-align:center;
                                         color:{'white' if cell_bg not in ['#f1f3f5', 'transparent', '#e3f2fd', '#fff3e0'] else 'black'};'>
                                 {day}
                             </div>
@@ -259,7 +259,6 @@ def render_individual_calendar_tab():
         
         if daily_records:
             df_list = pd.DataFrame(daily_records)
-            
             st.dataframe(
                 df_list, 
                 use_container_width=True, 
