@@ -131,13 +131,15 @@ def load_data(sheet_name):
         if not data: return pd.DataFrame()
         headers = data.pop(0)
         df = pd.DataFrame(data, columns=headers)
-        # 날짜 컬럼이 있으면 형식 통일
-        if 'date' in df.columns:
+        
+        # [수정] 'users' 시트는 날짜 필터링을 절대 하지 않도록 예외 처리
+        if sheet_name != 'users' and 'date' in df.columns:
             df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime("%Y-%m-%d")
             df = df.dropna(subset=['date']) 
-        # 이름 컬럼이 있으면 공백 제거
+            
         if 'name' in df.columns:
             df['name'] = df['name'].astype(str).str.strip()
+            
         return df
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame()
