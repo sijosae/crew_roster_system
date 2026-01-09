@@ -5,9 +5,8 @@ from datetime import datetime
 import io
 import utils  # 공통 도구함
 
-# ... (상단 콜백 함수 생략 / 그대로 유지) ...
 # ==========================================
-# 1. 탭 내부 전용 콜백 함수 (화살표 네비게이션)
+# 1. 탭 내부 전용 콜백 함수
 # ==========================================
 def prev_month_indiv():
     if st.session_state.indiv_view_month == 1:
@@ -28,7 +27,34 @@ def next_month_indiv():
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
 # ==========================================
-# 2. 메인 렌더링 함수
+# 2. 통계 계산 함수 (감차/휴무 로직 적용)
+# ==========================================
+def calculate_real_stats(df_work, reduction_rules, h_dict, target_name):
+    cnt_am = 0
+    cnt_pm = 0
+    if df_work.empty: return 0, 0
+
+    for _, row in df_work.iterrows():
+        shift = row['shift']
+        if shift not in ['오전', '오후']: continue
+        d_str = row['date']
+        
+        grp = utils.get_group_from_dict(h_dict, target_name, d_str)
+        auto_shift = utils.calculate_auto_shift(grp, d_str)
+        is_red = utils.is_reduction_target(d_str, row['route'], row['seq'], reduction_rules)
+        is_sub = (str(row['is_sub']).upper() in ['Y', 'TRUE'])
+        
+        # 제외 조건: (원래휴무 or 감차대상) AND 대타아님 -> 근무 횟수 제외
+        if (auto_shift == '휴무' or is_red) and not is_sub:
+            continue
+            
+        if shift == '오전': cnt_am += 1
+        elif shift == '오후': cnt_pm += 1
+        
+    return cnt_am, cnt_pm
+
+# ==========================================
+# 3. 메인 렌더링 함수
 # ==========================================
 def render_individual_calendar_tab():
     st.subheader("👤 승무원별 월간 근무 현황 (통합)")
@@ -42,6 +68,15 @@ def render_individual_calendar_tab():
     df_plan = utils.load_data("schedules")
     df_work = utils.load_data("work_history")
     reduction_rules = utils.get_reduction_rules()
+    
+    # 조 히스토리 로드
+    gh = utils.load_data("group_history")
+    h_dict = {}
+    if not gh.empty:
+        for _, r in gh.iterrows():
+            if r['driver_name'] not in h_dict: h_dict[r['driver_name']] = []
+            h_dict[r['driver_name']].append((r['start_date'], r['group_name']))
+        for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
     
     if df_work.empty:
         df_work = pd.DataFrame(columns=['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub'])
@@ -65,7 +100,6 @@ def render_individual_calendar_tab():
     
     with c_nm: 
         target = st.selectbox("승무원 선택", drivers['name'].tolist(), key='sel_driver', label_visibility="collapsed")
-    
     with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c_yr: 
         year_range = range(2023, now.year + 3)
@@ -73,7 +107,6 @@ def render_individual_calendar_tab():
         if selected_year != st.session_state.indiv_view_year:
             st.session_state.indiv_view_year = selected_year
             st.rerun()
-
     with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
     with c_mo: 
         month_range = range(1, 13)
@@ -81,7 +114,6 @@ def render_individual_calendar_tab():
         if selected_month != st.session_state.indiv_view_month:
             st.session_state.indiv_view_month = selected_month
             st.rerun()
-
     with c_prev: st.button("◀", key="i_prev_btn", on_click=prev_month_indiv)
     with c_next: st.button("▶", key="i_next_btn", on_click=next_month_indiv)
     
@@ -95,13 +127,12 @@ def render_individual_calendar_tab():
         my_plan = df_plan[(df_plan['name']==target) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
         my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
         
-        stats_am = len(my_work[my_work['shift'] == '오전']) if not my_work.empty else 0
-        stats_pm = len(my_work[my_work['shift'] == '오후']) if not my_work.empty else 0
+        # 통계 계산
+        stats_am, stats_pm = calculate_real_stats(my_work, reduction_rules, h_dict, target)
         
         y_filter = f"{year}-"
         y_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(y_filter))] if not df_work.empty else pd.DataFrame()
-        y_am = len(y_work[y_work['shift'] == '오전']) if not y_work.empty else 0
-        y_pm = len(y_work[y_work['shift'] == '오후']) if not y_work.empty else 0
+        y_am, y_pm = calculate_real_stats(y_work, reduction_rules, h_dict, target)
         
         st.markdown(f"""
         <div style='display:flex; justify-content:center; gap:20px; margin-bottom:15px;'>
@@ -115,14 +146,6 @@ def render_individual_calendar_tab():
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
-        gh = utils.load_data("group_history")
-        h_dict = {}
-        if not gh.empty:
-            for _, r in gh.iterrows():
-                if r['driver_name'] not in h_dict: h_dict[r['driver_name']] = []
-                h_dict[r['driver_name']].append((r['start_date'], r['group_name']))
-            for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
             
         cols = st.columns(7)
         for w in utils.WEEKDAY_KOREAN:
@@ -161,34 +184,45 @@ def render_individual_calendar_tab():
                             
                             # 감차 여부 확인
                             is_reduction = utils.is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules)
-                            is_reduction_car = is_reduction or '감차' in str(w_row['car'])
 
-                            # [핵심 로직] 감차 대상 차량 -> 기본적으로 "감차휴무" (녹색)
-                            # 단, "다른 차량"으로 근무했다면 (즉, DB에 감차 차량이 아닌 다른 차량이 찍혀있다면) -> 근무 표시
-                            # 여기서 p_work는 해당 날짜의 '이 승무원'의 기록이므로, 
-                            # 만약 감차 차량(5002)에 이름이 적혀있어서 파싱되었다면 -> w_row['car']는 5002 -> is_reduction True -> 휴무 처리
-                            # 만약 대타 차량(5068)에 이름이 적혀있어서 파싱되었다면 -> w_row['car']는 5068 -> is_reduction False -> 근무 처리
-                            
-                            if is_reduction_car:
-                                # 감차 대상 차량에 이름이 적혀있음 -> 휴무로 간주
+                            # [우선순위 1] (원래 휴무일) AND (감차 대상) AND (대타 아님) -> 감차휴무 + 조휴무 표시
+                            if auto == '휴무' and is_reduction and not is_sub:
+                                cell_bg = "#00592D" # 녹색 (휴무)
+                                # [핵심 수정] 감차휴무와 조 휴무 정보를 같이 표시
+                                txt_content = f"<div style='line-height:1.2; color:white; font-weight:bold; font-size:13px;'>🚫 감차휴무<br><span style='font-size:11px; font-weight:normal; opacity:0.9;'>({grp} 휴무)</span></div>"
+                                rec_shift = f"감차휴무({grp})"
+                                rec_route, rec_seq, rec_car = "-", "-", "-"
+
+                            # [우선순위 2] 명시적 감차휴무
+                            elif w_row['shift'] == '감차휴무':
                                 cell_bg = "#00592D"
                                 txt_content = "<div style='line-height:1.2; color:white; font-weight:bold; font-size:14px;'>🚫 감차<br>휴무</div>"
                                 rec_shift = "감차휴무"
-                                rec_route = "-"
-                                rec_seq = "-"
-                                rec_car = "-"
+                                rec_route, rec_seq, rec_car = "-", "-", "-"
                             
-                            # 감차 아님 (일반 근무 or 대타 근무)
+                            # [우선순위 3] 감차 대상 차량인데, 근무자로 이름이 올라와 있으나 대타는 아닌 경우 (즉, 엑셀에 이름은 있는데 차는 쉬는 경우)
+                            elif is_reduction and not is_sub:
+                                cell_bg = "#00592D"
+                                txt_content = "<div style='line-height:1.2; color:white; font-weight:bold; font-size:14px;'>🚫 감차<br>휴무</div>"
+                                rec_shift = "감차휴무"
+                                rec_route, rec_seq, rec_car = "-", "-", "-"
+
+                            # [우선순위 4] 실제 근무 (오전/오후)
                             elif w_row['shift'] in ['오전', '오후']:
                                 if w_row['shift'] == '오전': cell_bg = "#1e88e5" 
                                 elif w_row['shift'] == '오후': cell_bg = "#e53935" 
                                 if is_sub: cell_bg = "#8e24aa"
                                 
+                                # 감차 대상인데 근무함 -> 감차근무 (노란색 표시)
+                                mark = ""
+                                if is_reduction or '감차' in str(w_row['car']):
+                                    mark = "<div style='color:#FFEB3B; font-weight:bold; font-size:11px;'>🚫 감차근무</div>"
+                                
                                 car_text = f"{w_row['car']}"
                                 rec_shift = f"{w_row['shift']}"
                                 if is_sub: rec_shift += " (대타)"
                                 
-                                txt_content = f"<div style='line-height:1.4; color:white;'><div style='font-size:14px; font-weight:bold;'>{w_row['route']}노선 {w_row['seq']}순번</div><div style='font-size:13px;'>{car_text}</div><div style='font-size:14px; font-weight:bold; margin-top:2px;'>{w_row['shift']}</div></div>"
+                                txt_content = f"<div style='line-height:1.4; color:white;'>{mark}<div style='font-size:14px; font-weight:bold;'>{w_row['route']}노선 {w_row['seq']}순번</div><div style='font-size:13px;'>{car_text}</div><div style='font-size:14px; font-weight:bold; margin-top:2px;'>{w_row['shift']}</div></div>"
                                 
                                 rec_route, rec_seq, rec_car = w_row['route'], w_row['seq'], w_row['car']
                             
@@ -202,9 +236,13 @@ def render_individual_calendar_tab():
                         elif not p_plan.empty:
                             pl_row = p_plan.iloc[0]
                             t = pl_row['type']
-                            note_txt = f"<br><span style='font-size:12px; font-weight:normal;'>({pl_row['note']})</span>" if pl_row['note'] else ""
+                            note_txt = f"<br><span style='font-size:11px; font-weight:normal;'>({pl_row['note']})</span>" if pl_row['note'] else ""
                             
-                            if t == '감차휴무':
+                            if auto == '휴무' and (t == '휴무' or t == '감차휴무'):
+                                cell_bg = "#f1f3f5"
+                                txt_content = f"<div style='color:#999; font-weight:bold; font-size:13px;'>휴무<br>({grp})</div>"
+                                rec_shift = "휴무(원래휴무)"
+                            elif t == '감차휴무':
                                 cell_bg = "#00592D"
                                 txt_content = "<div style='line-height:1.2; color:white; font-weight:bold; font-size:14px;'>🚫 감차<br>휴무</div>"
                                 rec_shift = "감차휴무"
@@ -218,10 +256,9 @@ def render_individual_calendar_tab():
                                 rec_shift = t
                             
                             rec_route = pl_row['note']
-                            rec_seq = "-"
-                            rec_car = "-"
+                            rec_seq, rec_car = "-", "-"
                         
-                        # [Case 3] 자동 계산 (데이터 없음)
+                        # [Case 3] 데이터 없음
                         else:
                             if auto == "휴무":
                                 cell_bg = "#f1f3f5"
@@ -237,11 +274,8 @@ def render_individual_calendar_tab():
                                 txt_content = "-"
                                 rec_shift = "-"
                             
-                            rec_route = "-"
-                            rec_seq = "-"
-                            rec_car = "-"
+                            rec_route, rec_seq, rec_car = "-", "-", "-"
 
-                        # [렌더링]
                         st.markdown(f"""
                         <div style='background-color:{cell_bg}; border:1px solid #ddd; border-radius:5px; 
                                     min-height:100px; height:auto; padding:5px; 
