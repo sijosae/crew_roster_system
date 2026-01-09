@@ -13,6 +13,8 @@ def prev_cal_callback():
         st.session_state.view_month = 12
     else:
         st.session_state.view_month -= 1
+    
+    # [핵심] 버튼 클릭 시 셀렉트박스 값(key)도 강제 동기화 -> 버튼 고장 방지
     st.session_state.sb_view_year = st.session_state.view_year
     st.session_state.sb_view_month = st.session_state.view_month
 
@@ -22,6 +24,8 @@ def next_cal_callback():
         st.session_state.view_month = 1
     else:
         st.session_state.view_month += 1
+    
+    # [핵심] 버튼 클릭 시 셀렉트박스 값(key)도 강제 동기화
     st.session_state.sb_view_year = st.session_state.view_year
     st.session_state.sb_view_month = st.session_state.view_month
 
@@ -152,25 +156,31 @@ def render_calendar_tab():
     with c_view:
         view_mode = st.radio("보기", ["가로 스크롤", "달력"], horizontal=True, label_visibility="collapsed")
     
+    inject_custom_css()
+    
     now = utils.get_kst_now()
-    if 'view_year' not in st.session_state: st.session_state.view_year = now.year
-    if 'view_month' not in st.session_state: st.session_state.view_month = now.month
+    # [수정] Session State 초기화 (위젯 키도 함께 초기화)
+    if 'view_year' not in st.session_state: 
+        st.session_state.view_year = now.year
+        st.session_state.sb_view_year = now.year
+    if 'view_month' not in st.session_state: 
+        st.session_state.view_month = now.month
+        st.session_state.sb_view_month = now.month
     
     # 달력 이동 컨트롤
     c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
     with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c2: 
         years = list(range(2023, now.year + 3))
-        try: y_idx = years.index(st.session_state.view_year)
-        except: y_idx = 0
-        st.selectbox("년도", years, index=y_idx, key='sb_view_year', label_visibility="collapsed")
+        # [수정] index 파라미터 삭제 (Session State 충돌 해결)
+        st.selectbox("년도", years, key='sb_view_year', label_visibility="collapsed")
         if st.session_state.sb_view_year != st.session_state.view_year:
             st.session_state.view_year = st.session_state.sb_view_year; st.rerun()
 
     with c3: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
     with c4: 
-        st.selectbox("월", range(1, 13), index=st.session_state.view_month-1, key='sb_view_month', label_visibility="collapsed")
-        # [수정 완료] 오타 수정: view_year -> view_month로 변경하여 무한루프 해결
+        # [수정] index 파라미터 삭제 (Session State 충돌 해결)
+        st.selectbox("월", range(1, 13), key='sb_view_month', label_visibility="collapsed")
         if st.session_state.sb_view_month != st.session_state.view_month:
             st.session_state.view_month = st.session_state.sb_view_month; st.rerun()
 
@@ -313,3 +323,57 @@ def render_calendar_tab():
                 with cols[i]:
                     if d == 0: st.markdown("<div class='calendar-day-box' style='background:#f8f9fa;'></div>", unsafe_allow_html=True)
                     else: st.markdown(get_day_html(d, False), unsafe_allow_html=True)
+
+def inject_custom_css():
+    st.markdown("""
+    <style>
+        .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
+        div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
+        .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
+        
+        /* [수정] 박스 그림자 적용 (테두리 두께로 인한 밀림 방지) */
+        .calendar-day-box { 
+            border: 1px solid #e9ecef; 
+            min-height: 200px; 
+            padding: 0; 
+            background-color: white; 
+            display: flex; 
+            flex-direction: column; 
+            height: auto !important; 
+        }
+        
+        .calendar-day-box-horiz { flex: 0 0 90px; } 
+        .calendar-day-box-grid { width: 100%; margin: 2px; }
+        
+        .horizontal-scroll-container::-webkit-scrollbar { height: 8px; }
+        .horizontal-scroll-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        .horizontal-scroll-container::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+        .horizontal-scroll-container::-webkit-scrollbar-thumb:hover { background: #aaa; }
+        .daily-stats-box { background-color: #f1f3f5; border-bottom: 1px solid #e9ecef; font-size: 11px; text-align: center; padding: 3px 0; color: #495057; font-weight: bold; white-space: nowrap; }
+        .group-info-box { font-size: 10px; padding: 2px 4px; background-color: #fff; border-bottom: 1px solid #f1f3f5; line-height: 1.2; font-weight: bold; }
+        .event-container { height: 46px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid #f1f3f5; padding: 2px 1px; background-color: #fff; }
+        .event-container::-webkit-scrollbar { display: none; }
+        .day-header { display: flex; flex-direction: column; padding-top: 4px; padding-bottom: 4px; gap: 1px; justify-content: center; background-color: transparent; border-bottom: 1px solid #eee; }
+        
+        .schedule-bar { color: white; padding: 0 2px; margin-bottom: 1px; line-height: 1.1; text-align: center; cursor: help; font-size: 11px; height: 34px; display: flex; flex-direction: column; justify-content: center; overflow: hidden; border-top: none; border-bottom: none; }
+        .bar-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -10px !important; margin-left: 2px; position: relative; z-index: 2; }
+        .bar-mid { border-radius: 0; border-left: none; border-right: none; margin-left: -10px !important; margin-right: -10px !important; position: relative; z-index: 1; }
+        .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
+        .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
+        .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
+
+        /* [수정] 로그인 버튼 - 초강력 CSS 우선순위 적용 */
+        button[kind="primary"], div[data-testid="stButton"] button {
+            background-color: #00592D !important;
+            border-color: #00592D !important;
+            color: white !important;
+        }
+        button[kind="primary"]:hover, div[data-testid="stButton"] button:hover {
+            background-color: #004d26 !important;
+            border-color: #004d26 !important;
+            color: white !important;
+        }
+        
+        @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
+    </style>
+    """, unsafe_allow_html=True)
