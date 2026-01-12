@@ -27,13 +27,12 @@ def show_input_dialog():
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 try:
-                    with st.spinner('저장 중입니다...'):
-                        # utils의 함수 사용
+                    with st.spinner('저장 중...'):
                         count, ids = utils.save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
                     
                     st.toast("✅ 저장 완료!", icon="🔄")
                     utils.add_log(f"입력 성공: {len(lst)}명", ids=ids, sheet_name="schedules")
-                    time.sleep(0.7)
+                    # [수정] 대기 시간(time.sleep) 제거 -> 즉시 닫힘
                     st.rerun()
                 except Exception as e:
                     st.error(f"🚨 저장 중 오류 발생: {e}")
@@ -49,14 +48,14 @@ def show_input_dialog():
         if st.button("회사 행사 저장", type="primary", use_container_width=True, key="quick_event_save"):
             if et and len(ed_list) > 0:
                 try:
-                    with st.spinner('저장 중입니다...'):
+                    with st.spinner('저장 중...'):
                         for d in pd.date_range(ed_list[0], ed_list[-1]):
                             utils.add_company_event(d.strftime("%Y-%m-%d"), et)
                         st.cache_data.clear()
                         
                     st.toast("✅ 행사 저장 완료!", icon="🔄")
                     utils.add_log(f"행사 등록: {et}", sheet_name="company_events")
-                    time.sleep(0.7)
+                    # [수정] 대기 시간 제거 -> 즉시 닫힘
                     st.rerun()
                 except Exception:
                     st.error("오류 발생")
