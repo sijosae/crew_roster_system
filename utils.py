@@ -28,9 +28,9 @@ def get_type_color(type_name):
         "휴무": "#00592D", "교육": "#8c6b4a", "경조사": "#1F3994", 
         "징계": "#000000", "당일 해지": "#8B0000", "병가": "#A52A2A", 
         "휴직": "#D2691E", "육아휴직": "#D2691E", "기타": "#363636",
-        "실제근무_본인": "#1e88e5", # 파랑
-        "실제근무_대운": "#8e24aa",  # 보라
-        "감차휴무": "#00592D" # 녹색
+        "실제근무_본인": "#1e88e5",
+        "실제근무_대운": "#8e24aa",
+        "감차휴무": "#00592D"
     }
     return colors.get(type_name, "#546E7A")
 
@@ -111,7 +111,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 데이터 저장 및 관리 함수 (누락된 함수 복구)
+# 3. 데이터 저장 및 관리 함수
 # ==========================================
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
@@ -301,7 +301,7 @@ def add_reduction_rule(start, end, route, seq, cond):
     clear_cache_after_save()
 
 # ==========================================
-# 4. 날짜 및 스케줄 계산 로직 (감차 포함)
+# 4. 날짜 및 스케줄 계산 로직
 # ==========================================
 def is_holiday(date_obj):
     return date_obj in kr_holidays
@@ -381,7 +381,7 @@ def is_reduction_target(date_str, route, seq, rules):
     return False
 
 # ==========================================
-# 5. 로그인 및 사용자 관리 (기존 유지)
+# 5. 로그인 및 사용자 관리
 # ==========================================
 def login_user(username, password):
     df = load_data("users")
@@ -429,8 +429,8 @@ def parse_roster_excel(file):
         except: continue 
 
         cols_map = [
-            {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7}, # Left
-            {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15} # Right
+            {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7},
+            {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15}
         ]
         
         for side in cols_map:
@@ -484,3 +484,30 @@ def parse_roster_excel(file):
                         'is_sub': bool(pm_sub), 'orig_fix': pm_fix
                     })
     return pd.DataFrame(extracted_data)
+
+# ==========================================
+# 6. 관리자 메모장 (Admin Memo) 기능
+# ==========================================
+def get_admin_memo():
+    sh = get_db_connection()
+    try:
+        ws = sh.worksheet("admin_memo")
+    except gspread.exceptions.WorksheetNotFound:
+        # 시트가 없으면 생성
+        ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
+        ws.update_cell(1, 1, "")
+    
+    # 첫 번째 셀(A1)에 내용 저장
+    val = ws.cell(1, 1).value
+    return val if val else ""
+
+def save_admin_memo(text):
+    sh = get_db_connection()
+    try:
+        ws = sh.worksheet("admin_memo")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
+    
+    # A1 셀에 덮어쓰기
+    ws.update_cell(1, 1, text)
+    clear_cache_after_save()
