@@ -130,7 +130,7 @@ def calculate_layout_rows(df_month):
     return layout_map, max_row
 
 # ==========================================
-# 3. 메인 렌더링 함수 (수정됨: input_func 인자 추가)
+# 3. 메인 렌더링 함수 (수정됨: 메모장 추가)
 # ==========================================
 def render_calendar_tab(input_func=None):
     if st.session_state.get('last_error_msg'): 
@@ -178,7 +178,6 @@ def render_calendar_tab(input_func=None):
     with c5: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
     with c6: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
     
-    # [수정] 외부에서 전달받은 함수(input_func)를 실행하도록 변경
     with c7:
         if st.session_state.get('auth_status') == 'admin':
             if st.button("➕ 빠른 입력", type="primary", use_container_width=True): 
@@ -320,3 +319,21 @@ def render_calendar_tab(input_func=None):
                 with cols[i]:
                     if d == 0: st.markdown("<div class='calendar-day-box' style='background:#f8f9fa;'></div>", unsafe_allow_html=True)
                     else: st.markdown(get_day_html(d, False), unsafe_allow_html=True)
+
+    # [추가] 관리자 전용 메모장 (하단 배치)
+    if st.session_state.get('auth_status') == 'admin':
+        st.divider()
+        st.subheader("🔒 관리자 전용 메모 (징계/중요사항)")
+        st.info("이 내용은 DB에 저장되며, 관리자에게만 보입니다.")
+        
+        # 메모 로드
+        current_memo = utils.get_admin_memo()
+        
+        # 텍스트 에디터
+        new_memo = st.text_area("내용 입력", value=current_memo, height=150, key="admin_memo_area")
+        
+        if st.button("메모 저장", type="primary"):
+            with st.spinner("저장 중..."):
+                utils.save_admin_memo(new_memo)
+            st.success("저장되었습니다.")
+            st.rerun()
