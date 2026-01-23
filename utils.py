@@ -111,7 +111,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 데이터 저장 및 관리 함수 (수정됨)
+# 3. 데이터 저장 및 관리 함수 (강제 위치 지정 방식)
 # ==========================================
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
@@ -127,7 +127,6 @@ def save_range_batch(name_list, start, end, type, shift, note):
             d_str = d.strftime("%Y-%m-%d")
             row_id = f"{base_id}{count:02d}"
             generated_ids.append(row_id)
-            # 리스트 안에 리스트가 확실히 들어가도록 함
             rows_to_add.append([str(row_id), str(name), str(d_str), str(type), str(note), str(created_at), str(shift)])
             count += 1
             
@@ -135,10 +134,17 @@ def save_range_batch(name_list, start, end, type, shift, note):
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
         
-        # [긴급 수정] append_rows 오작동 방지를 위해 한 줄씩 append_row 사용 (안전성 최우선)
-        # 데이터가 많으면 느릴 수 있지만, 데이터 무결성이 더 중요함
-        for row in rows_to_add:
-            ws.append_row(row, value_input_option='USER_ENTERED')
+        # [핵심 수정] append_row 대신 빈 줄을 계산하여 정확한 위치(A열)에 꽂아넣음
+        # 1. 현재 데이터가 있는 마지막 줄 확인
+        existing_data = ws.get_all_values()
+        next_row = len(existing_data) + 1
+        
+        # 2. 범위 지정 (A{다음줄} : G{끝날줄})
+        end_row = next_row + len(rows_to_add) - 1
+        range_str = f"A{next_row}:G{end_row}"
+        
+        # 3. 해당 범위에 데이터 강제 주입 (밀림 방지)
+        ws.update(range_name=range_str, values=rows_to_add, value_input_option='USER_ENTERED')
             
         clear_cache_after_save()
     return len(rows_to_add), generated_ids
@@ -149,7 +155,12 @@ def add_company_event(date, title):
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d")
     row_id = now_kst.strftime("%y%m%d%H%M%S")
-    ws.append_row([row_id, date, title, created_at], value_input_option='USER_ENTERED')
+    
+    # [핵심 수정] 이벤트 저장도 동일하게 위치 강제 지정
+    existing_data = ws.get_all_values()
+    next_row = len(existing_data) + 1
+    ws.update(range_name=f"A{next_row}:D{next_row}", values=[[str(row_id), str(date), str(title), str(created_at)]], value_input_option='USER_ENTERED')
+    
     clear_cache_after_save()
     return row_id
 
@@ -213,12 +224,14 @@ def save_work_history(df_new):
     df_final = df_final.sort_values(by=['date', 'name'])
     
     ws.clear()
-    ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
+    # 헤더 쓰기
+    ws.update(range_name="A1:I1", values=[['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']], value_input_option='USER_ENTERED')
     
     data_to_write = df_final.fillna("").astype(str).values.tolist()
     if data_to_write:
-        # 여기서는 append_rows 사용하되 명시적으로 처리
-        ws.append_rows(data_to_write, value_input_option='USER_ENTERED')
+        # 데이터 쓰기 (A2부터)
+        end_row = 1 + len(data_to_write)
+        ws.update(range_name=f"A2:I{end_row}", values=data_to_write, value_input_option='USER_ENTERED')
         
     clear_cache_after_save()
     return len(df_new)
@@ -502,9 +515,9 @@ def get_admin_memo():
     except gspread.exceptions.WorksheetNotFound:
         # 시트가 없으면 생성
         ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
-        ws.update_cell(1, 1, "")
+        ws.update(range_name="A1", values=[[""]], value_input_option='USER_ENTERED')
     
-    val = ws.cell(1, 1).value
+    val = ws.acell('A1').value
     return val if val else ""
 
 def save_admin_memo(text):
@@ -514,5 +527,5 @@ def save_admin_memo(text):
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
     
-    ws.update_cell(1, 1, text)
+    ws.update(range_name="A1", values=[[text]], value_input_option='USER_ENTERED')
     clear_cache_after_save()
