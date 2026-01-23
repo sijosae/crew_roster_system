@@ -405,3 +405,139 @@ def is_reduction_target(date_str, route, seq, rules):
             if r['route'] == str(route).strip() and r['seq'] == str(seq).strip():
                 if r['condition'] == 'Always': return True
                 if r['condition'] == 'Weekend/Holiday' and is_holi: return True
+    return False
+
+# ==========================================
+# 5. 로그인 및 사용자 관리
+# ==========================================
+def login_user(username, password):
+    df = load_data("users")
+    if df.empty: return None
+    pw_hash = make_hash(password)
+    if 'username' not in df.columns: return None
+    df['username'] = df['username'].astype(str)
+    user = df[(df['username'] == username) & (df['password'] == pw_hash)]
+    if not user.empty:
+        return user.iloc[0]['role'], user.iloc[0]['name']
+    return None
+
+def log_login_access(username, name):
+    try:
+        sh = get_db_connection()
+        try:
+            ws = sh.worksheet("access_logs")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="access_logs", rows=1000, cols=4)
+            ws.append_row(["timestamp", "username", "name", "status"])
+        timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+        ws.append_row([timestamp, username, name, "Login Success"])
+        st.cache_data.clear()
+    except: pass
+
+def parse_roster_excel(file):
+    df_raw = pd.read_excel(file, header=None)
+    date_rows = []
+    for idx, row in df_raw.iterrows():
+        val = str(row[0])
+        if "202" in val or "년" in val:
+            try:
+                if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
+                    date_rows.append(idx)
+            except: pass
+            
+    extracted_data = []
+    
+    for start_row in date_rows:
+        try:
+            year = int(str(df_raw.iloc[start_row, 0]).replace("년","").strip())
+            month = int(str(df_raw.iloc[start_row, 3]).replace("월","").strip())
+            day = int(str(df_raw.iloc[start_row, 5]).replace("일","").strip())
+            current_date = datetime(year, month, day).strftime("%Y-%m-%d")
+        except: continue 
+
+        cols_map = [
+            {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7},
+            {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15}
+        ]
+        
+        for side in cols_map:
+            last_route = None
+            for r_offset in range(3, 75): 
+                curr_idx = start_row + r_offset
+                if curr_idx >= len(df_raw): break
+                
+                raw_route = df_raw.iloc[curr_idx, side['route']]
+                if pd.notnull(raw_route) and str(raw_route).strip() != "":
+                    last_route = str(raw_route).strip()
+                current_route = last_route if last_route else ""
+
+                raw_seq = df_raw.iloc[curr_idx, side['seq']]
+                raw_car = df_raw.iloc[curr_idx, side['car']]
+                
+                current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
+                
+                try:
+                    raw_car_str = str(raw_car).strip()
+                    digits_only = re.sub(r'[^0-9]', '', raw_car_str)
+                    car_num = int(digits_only)
+                    is_valid_car = (5001 <= car_num <= 5300)
+                    current_car = str(car_num)
+                except:
+                    is_valid_car = False
+                    current_car = ""
+
+                if not (current_route and current_seq and is_valid_car):
+                    continue
+                
+                am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
+                am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
+                am_final = am_sub if am_sub else am_fix
+                
+                pm_fix = clean_driver_name(df_raw.iloc[curr_idx, side['pm_fix']])
+                pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
+                pm_final = pm_sub if pm_sub else pm_fix
+                
+                if am_final: 
+                    extracted_data.append({
+                        'date': current_date, 'name': am_final, 'shift': '오전', 
+                        'route': current_route, 'seq': current_seq, 'car': current_car, 
+                        'is_sub': bool(am_sub), 'orig_fix': am_fix
+                    })
+                
+                if pm_final:
+                    extracted_data.append({
+                        'date': current_date, 'name': pm_final, 'shift': '오후', 
+                        'route': current_route, 'seq': current_seq, 'car': current_car, 
+                        'is_sub': bool(pm_sub), 'orig_fix': pm_fix
+                    })
+    return pd.DataFrame(extracted_data)
+
+# ==========================================
+# 6. 관리자 메모장 (Admin Memo) 기능
+# ==========================================
+def get_admin_memo():
+    sh = get_db_connection()
+    try:
+        ws = sh.worksheet("admin_memo")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
+        try:
+            ws.update(values=[[""]], range_name="A1", value_input_option='USER_ENTERED')
+        except:
+            ws.update("A1", [[""]], value_input_option='USER_ENTERED')
+    
+    val = ws.acell('A1').value
+    return val if val else ""
+
+def save_admin_memo(text):
+    sh = get_db_connection()
+    try:
+        ws = sh.worksheet("admin_memo")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
+    
+    try:
+        ws.update(values=[[text]], range_name="A1", value_input_option='USER_ENTERED')
+    except:
+        ws.update("A1", [[text]], value_input_option='USER_ENTERED')
+    clear_cache_after_save()
