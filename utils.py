@@ -111,7 +111,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 데이터 저장 및 관리 함수 (강제 위치 지정 방식)
+# 3. 데이터 저장 및 관리 함수 (절대 좌표 강제 지정)
 # ==========================================
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
@@ -134,17 +134,17 @@ def save_range_batch(name_list, start, end, type, shift, note):
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
         
-        # [핵심 수정] append_row 대신 빈 줄을 계산하여 정확한 위치(A열)에 꽂아넣음
-        # 1. 현재 데이터가 있는 마지막 줄 확인
+        # [최종 수정] gspread 버전에 상관없이 작동하고, 절대 좌표(A열)를 강제하는 방식
         existing_data = ws.get_all_values()
         next_row = len(existing_data) + 1
         
-        # 2. 범위 지정 (A{다음줄} : G{끝날줄})
-        end_row = next_row + len(rows_to_add) - 1
-        range_str = f"A{next_row}:G{end_row}"
-        
-        # 3. 해당 범위에 데이터 강제 주입 (밀림 방지)
-        ws.update(range_name=range_str, values=rows_to_add, value_input_option='USER_ENTERED')
+        # 범위 지정 없이 'A{next_row}'부터 쓰라고 명령 (가장 안전함)
+        try:
+            # gspread 최신 버전
+            ws.update(values=rows_to_add, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
+        except TypeError:
+            # gspread 구 버전 (혹시 모를 호환성)
+            ws.update(f"A{next_row}", rows_to_add, value_input_option='USER_ENTERED')
             
         clear_cache_after_save()
     return len(rows_to_add), generated_ids
@@ -156,11 +156,15 @@ def add_company_event(date, title):
     created_at = now_kst.strftime("%Y-%m-%d")
     row_id = now_kst.strftime("%y%m%d%H%M%S")
     
-    # [핵심 수정] 이벤트 저장도 동일하게 위치 강제 지정
     existing_data = ws.get_all_values()
     next_row = len(existing_data) + 1
-    ws.update(range_name=f"A{next_row}:D{next_row}", values=[[str(row_id), str(date), str(title), str(created_at)]], value_input_option='USER_ENTERED')
     
+    data = [[str(row_id), str(date), str(title), str(created_at)]]
+    try:
+        ws.update(values=data, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
+    except TypeError:
+        ws.update(f"A{next_row}", data, value_input_option='USER_ENTERED')
+        
     clear_cache_after_save()
     return row_id
 
@@ -224,14 +228,17 @@ def save_work_history(df_new):
     df_final = df_final.sort_values(by=['date', 'name'])
     
     ws.clear()
-    # 헤더 쓰기
-    ws.update(range_name="A1:I1", values=[['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']], value_input_option='USER_ENTERED')
     
+    # 헤더 및 데이터 저장 (절대 좌표 사용)
+    header = [['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']]
     data_to_write = df_final.fillna("").astype(str).values.tolist()
-    if data_to_write:
-        # 데이터 쓰기 (A2부터)
-        end_row = 1 + len(data_to_write)
-        ws.update(range_name=f"A2:I{end_row}", values=data_to_write, value_input_option='USER_ENTERED')
+    
+    all_values = header + data_to_write
+    
+    try:
+        ws.update(values=all_values, range_name="A1", value_input_option='USER_ENTERED')
+    except TypeError:
+        ws.update("A1", all_values, value_input_option='USER_ENTERED')
         
     clear_cache_after_save()
     return len(df_new)
@@ -398,134 +405,3 @@ def is_reduction_target(date_str, route, seq, rules):
             if r['route'] == str(route).strip() and r['seq'] == str(seq).strip():
                 if r['condition'] == 'Always': return True
                 if r['condition'] == 'Weekend/Holiday' and is_holi: return True
-    return False
-
-# ==========================================
-# 5. 로그인 및 사용자 관리
-# ==========================================
-def login_user(username, password):
-    df = load_data("users")
-    if df.empty: return None
-    pw_hash = make_hash(password)
-    if 'username' not in df.columns: return None
-    df['username'] = df['username'].astype(str)
-    user = df[(df['username'] == username) & (df['password'] == pw_hash)]
-    if not user.empty:
-        return user.iloc[0]['role'], user.iloc[0]['name']
-    return None
-
-def log_login_access(username, name):
-    try:
-        sh = get_db_connection()
-        try:
-            ws = sh.worksheet("access_logs")
-        except gspread.exceptions.WorksheetNotFound:
-            ws = sh.add_worksheet(title="access_logs", rows=1000, cols=4)
-            ws.append_row(["timestamp", "username", "name", "status"])
-        timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-        ws.append_row([timestamp, username, name, "Login Success"])
-        st.cache_data.clear()
-    except: pass
-
-def parse_roster_excel(file):
-    df_raw = pd.read_excel(file, header=None)
-    date_rows = []
-    for idx, row in df_raw.iterrows():
-        val = str(row[0])
-        if "202" in val or "년" in val:
-            try:
-                if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
-                    date_rows.append(idx)
-            except: pass
-            
-    extracted_data = []
-    
-    for start_row in date_rows:
-        try:
-            year = int(str(df_raw.iloc[start_row, 0]).replace("년","").strip())
-            month = int(str(df_raw.iloc[start_row, 3]).replace("월","").strip())
-            day = int(str(df_raw.iloc[start_row, 5]).replace("일","").strip())
-            current_date = datetime(year, month, day).strftime("%Y-%m-%d")
-        except: continue 
-
-        cols_map = [
-            {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7},
-            {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15}
-        ]
-        
-        for side in cols_map:
-            last_route = None
-            for r_offset in range(3, 75): 
-                curr_idx = start_row + r_offset
-                if curr_idx >= len(df_raw): break
-                
-                raw_route = df_raw.iloc[curr_idx, side['route']]
-                if pd.notnull(raw_route) and str(raw_route).strip() != "":
-                    last_route = str(raw_route).strip()
-                current_route = last_route if last_route else ""
-
-                raw_seq = df_raw.iloc[curr_idx, side['seq']]
-                raw_car = df_raw.iloc[curr_idx, side['car']]
-                
-                current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
-                
-                try:
-                    raw_car_str = str(raw_car).strip()
-                    digits_only = re.sub(r'[^0-9]', '', raw_car_str)
-                    car_num = int(digits_only)
-                    is_valid_car = (5001 <= car_num <= 5300)
-                    current_car = str(car_num)
-                except:
-                    is_valid_car = False
-                    current_car = ""
-
-                if not (current_route and current_seq and is_valid_car):
-                    continue
-                
-                am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
-                am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
-                am_final = am_sub if am_sub else am_fix
-                
-                pm_fix = clean_driver_name(df_raw.iloc[curr_idx, side['pm_fix']])
-                pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
-                pm_final = pm_sub if pm_sub else pm_fix
-                
-                if am_final: 
-                    extracted_data.append({
-                        'date': current_date, 'name': am_final, 'shift': '오전', 
-                        'route': current_route, 'seq': current_seq, 'car': current_car, 
-                        'is_sub': bool(am_sub), 'orig_fix': am_fix
-                    })
-                
-                if pm_final:
-                    extracted_data.append({
-                        'date': current_date, 'name': pm_final, 'shift': '오후', 
-                        'route': current_route, 'seq': current_seq, 'car': current_car, 
-                        'is_sub': bool(pm_sub), 'orig_fix': pm_fix
-                    })
-    return pd.DataFrame(extracted_data)
-
-# ==========================================
-# 6. 관리자 메모장 (Admin Memo) 기능
-# ==========================================
-def get_admin_memo():
-    sh = get_db_connection()
-    try:
-        ws = sh.worksheet("admin_memo")
-    except gspread.exceptions.WorksheetNotFound:
-        # 시트가 없으면 생성
-        ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
-        ws.update(range_name="A1", values=[[""]], value_input_option='USER_ENTERED')
-    
-    val = ws.acell('A1').value
-    return val if val else ""
-
-def save_admin_memo(text):
-    sh = get_db_connection()
-    try:
-        ws = sh.worksheet("admin_memo")
-    except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
-    
-    ws.update(range_name="A1", values=[[text]], value_input_option='USER_ENTERED')
-    clear_cache_after_save()
