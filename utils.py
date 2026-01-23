@@ -111,7 +111,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 데이터 저장 및 관리 함수
+# 3. 데이터 저장 및 관리 함수 (수정됨)
 # ==========================================
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
@@ -127,13 +127,19 @@ def save_range_batch(name_list, start, end, type, shift, note):
             d_str = d.strftime("%Y-%m-%d")
             row_id = f"{base_id}{count:02d}"
             generated_ids.append(row_id)
-            rows_to_add.append([row_id, name, d_str, type, note, created_at, shift])
+            # 리스트 안에 리스트가 확실히 들어가도록 함
+            rows_to_add.append([str(row_id), str(name), str(d_str), str(type), str(note), str(created_at), str(shift)])
             count += 1
             
     if rows_to_add:
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
-        ws.append_rows(rows_to_add)
+        
+        # [긴급 수정] append_rows 오작동 방지를 위해 한 줄씩 append_row 사용 (안전성 최우선)
+        # 데이터가 많으면 느릴 수 있지만, 데이터 무결성이 더 중요함
+        for row in rows_to_add:
+            ws.append_row(row, value_input_option='USER_ENTERED')
+            
         clear_cache_after_save()
     return len(rows_to_add), generated_ids
 
@@ -143,7 +149,7 @@ def add_company_event(date, title):
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d")
     row_id = now_kst.strftime("%y%m%d%H%M%S")
-    ws.append_row([row_id, date, title, created_at])
+    ws.append_row([row_id, date, title, created_at], value_input_option='USER_ENTERED')
     clear_cache_after_save()
     return row_id
 
@@ -211,7 +217,8 @@ def save_work_history(df_new):
     
     data_to_write = df_final.fillna("").astype(str).values.tolist()
     if data_to_write:
-        ws.append_rows(data_to_write)
+        # 여기서는 append_rows 사용하되 명시적으로 처리
+        ws.append_rows(data_to_write, value_input_option='USER_ENTERED')
         
     clear_cache_after_save()
     return len(df_new)
@@ -497,7 +504,6 @@ def get_admin_memo():
         ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
         ws.update_cell(1, 1, "")
     
-    # 첫 번째 셀(A1)에 내용 저장
     val = ws.cell(1, 1).value
     return val if val else ""
 
@@ -508,6 +514,5 @@ def save_admin_memo(text):
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
     
-    # A1 셀에 덮어쓰기
     ws.update_cell(1, 1, text)
     clear_cache_after_save()
