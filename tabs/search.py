@@ -14,12 +14,15 @@ def _init_search_session_state():
     if 'search_stat_month' not in st.session_state:
         st.session_state.search_stat_month = now.month
 
+# --- [탭2] 연간 통계용 화살표 콜백 ---
 def _prev_month_search():
     if st.session_state.search_stat_month == 1:
         st.session_state.search_stat_year -= 1
         st.session_state.search_stat_month = 12
     else:
         st.session_state.search_stat_month -= 1
+    # 탭2 위젯 동기화
+    st.session_state.sb_search_year = st.session_state.search_stat_year
 
 def _next_month_search():
     if st.session_state.search_stat_month == 12:
@@ -27,6 +30,29 @@ def _next_month_search():
         st.session_state.search_stat_month = 1
     else:
         st.session_state.search_stat_month += 1
+    # 탭2 위젯 동기화
+    st.session_state.sb_search_year = st.session_state.search_stat_year
+
+# --- [탭3] 차량별 현황용 화살표 콜백 (신규 추가) ---
+def _prev_month_veh():
+    if st.session_state.search_stat_month == 1:
+        st.session_state.search_stat_year -= 1
+        st.session_state.search_stat_month = 12
+    else:
+        st.session_state.search_stat_month -= 1
+    # [핵심] 탭3 위젯(sb_veh_...) 강제 동기화
+    st.session_state.sb_veh_year = st.session_state.search_stat_year
+    st.session_state.sb_veh_month = st.session_state.search_stat_month
+
+def _next_month_veh():
+    if st.session_state.search_stat_month == 12:
+        st.session_state.search_stat_year += 1
+        st.session_state.search_stat_month = 1
+    else:
+        st.session_state.search_stat_month += 1
+    # [핵심] 탭3 위젯(sb_veh_...) 강제 동기화
+    st.session_state.sb_veh_year = st.session_state.search_stat_year
+    st.session_state.sb_veh_month = st.session_state.search_stat_month
 
 def _get_history_dict():
     """조(Group) 히스토리 로드"""
@@ -40,7 +66,7 @@ def _get_history_dict():
     return h_dict
 
 # ==========================================
-# 2. [탭1] 상세 이력 조회 (기존 유지)
+# 2. [탭1] 상세 이력 조회
 # ==========================================
 def _render_detail_search(is_admin=False):
     df = utils.load_data("schedules")
@@ -93,7 +119,7 @@ def _render_detail_search(is_admin=False):
         st.info("검색 결과가 없습니다.")
 
 # ==========================================
-# 3. [탭2] 연간 근무 집계 (기존 유지)
+# 3. [탭2] 연간 근무 집계
 # ==========================================
 def _highlight_consecutive_months(data):
     bg_styles = pd.DataFrame('', index=data.index, columns=data.columns)
@@ -181,10 +207,9 @@ def _render_yearly_stats_logic():
     else: st.info("데이터가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 근무자 현황 (감차 로직 추가)
+# 4. [탭3] 월간 차량별 근무자 현황 (화살표 수정 완료)
 # ==========================================
 def _highlight_gamcha_cells(val):
-    """ '감차' 텍스트가 있는 셀에 빨간 배경 스타일 적용 """
     if val == "감차":
         return 'background-color: #ffcccc; color: #cc0000; font-weight: bold;'
     return ''
@@ -192,7 +217,7 @@ def _highlight_gamcha_cells(val):
 def _render_vehicle_stats_logic():
     _init_search_session_state()
     
-    # 날짜 컨트롤
+    # 날짜 컨트롤 (수정: 전용 콜백 사용)
     c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
     now = utils.get_kst_now()
     
@@ -212,8 +237,9 @@ def _render_vehicle_stats_logic():
         if sel_month != st.session_state.search_stat_month:
             st.session_state.search_stat_month = sel_month; st.rerun()
 
-    with c_prev: st.button("◀", key="v_prev_btn", on_click=_prev_month_search)
-    with c_next: st.button("▶", key="v_next_btn", on_click=_next_month_search)
+    # [수정] 전용 콜백 함수 연결
+    with c_prev: st.button("◀", key="v_prev_btn", on_click=_prev_month_veh)
+    with c_next: st.button("▶", key="v_next_btn", on_click=_next_month_veh)
     
     st.divider()
 
@@ -222,23 +248,19 @@ def _render_vehicle_stats_logic():
     month = st.session_state.search_stat_month
     filter_ym = f"{year}-{month:02d}"
     
-    # [추가] 감차 규칙 로드
     reduction_rules = utils.get_reduction_rules()
-    
     df_work = utils.load_data("work_history")
     
     if df_work.empty:
         st.info("근무 데이터가 없습니다.")
         return
 
-    # 1. 해당 월 데이터 필터링
     df_month = df_work[df_work['date'].astype(str).str.startswith(filter_ym)]
     
     if df_month.empty:
         st.info(f"{year}년 {month}월 데이터가 없습니다.")
         return
 
-    # 2. 차량 목록 추출 및 정렬
     valid_cars = df_month[df_month['car'].astype(str).str.strip() != ""]['car'].unique()
     
     def try_int(x):
@@ -247,7 +269,6 @@ def _render_vehicle_stats_logic():
     
     sorted_cars = sorted(valid_cars, key=try_int)
     
-    # 3. 데이터 매핑 (감차 판단을 위해 노선/순번 정보도 저장)
     schedule_map = {}
     for _, row in df_month.iterrows():
         try:
@@ -255,19 +276,12 @@ def _render_vehicle_stats_logic():
             c = str(row['car']).strip()
             s = str(row['shift']).strip() # 오전, 오후
             n = str(row['name']).strip()
-            
-            # [추가] 노선, 순번 정보 저장
             r_num = str(row.get('route', '')).strip()
             r_seq = str(row.get('seq', '')).strip()
             
-            schedule_map[(d, c, s)] = {
-                'name': n,
-                'route': r_num,
-                'seq': r_seq
-            }
+            schedule_map[(d, c, s)] = {'name': n, 'route': r_num, 'seq': r_seq}
         except: continue
             
-    # 4. 테이블 생성
     _, last_day = calendar.monthrange(year, month)
     table_data = []
     
@@ -278,21 +292,17 @@ def _render_vehicle_stats_logic():
         for d in range(1, last_day + 1):
             date_str = f"{year}-{month:02d}-{d:02d}"
             
-            # 오전 데이터 처리
             data_am = schedule_map.get((d, car, '오전'))
             val_am = ""
             if data_am:
-                # [핵심] 감차 규칙 확인
                 if utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
                     val_am = "감차"
                 else:
                     val_am = data_am['name']
             
-            # 오후 데이터 처리
             data_pm = schedule_map.get((d, car, '오후'))
             val_pm = ""
             if data_pm:
-                # [핵심] 감차 규칙 확인
                 if utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
                     val_pm = "감차"
                 else:
@@ -304,14 +314,11 @@ def _render_vehicle_stats_logic():
         table_data.append(row_am)
         table_data.append(row_pm)
         
-    # 5. 출력
     if table_data:
         df_res = pd.DataFrame(table_data)
-        
         cols = ['차량번호', '구분'] + [f"{d}일" for d in range(1, last_day + 1)]
         df_res = df_res[cols]
         
-        # [추가] 스타일 적용 (감차 텍스트 강조)
         st.dataframe(
             df_res.style.map(_highlight_gamcha_cells),
             use_container_width=True,
@@ -319,8 +326,7 @@ def _render_vehicle_stats_logic():
             column_config={
                 "차량번호": st.column_config.TextColumn("차량", width="small"),
                 "구분": st.column_config.TextColumn("근무", width="small")
-            },
-            height=600
+            }, height=600
         )
         
         output = io.BytesIO()
