@@ -133,15 +133,12 @@ def save_range_batch(name_list, start, end, type, shift, note):
     if rows_to_add:
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
-        
         existing_data = ws.get_all_values()
         next_row = len(existing_data) + 1
-        
         try:
             ws.update(values=rows_to_add, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
         except TypeError:
             ws.update(f"A{next_row}", rows_to_add, value_input_option='USER_ENTERED')
-            
         clear_cache_after_save()
     return len(rows_to_add), generated_ids
 
@@ -151,16 +148,13 @@ def add_company_event(date, title):
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d")
     row_id = now_kst.strftime("%y%m%d%H%M%S")
-    
     existing_data = ws.get_all_values()
     next_row = len(existing_data) + 1
-    
     data = [[str(row_id), str(date), str(title), str(created_at)]]
     try:
         ws.update(values=data, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
     except TypeError:
         ws.update(f"A{next_row}", data, value_input_option='USER_ENTERED')
-        
     clear_cache_after_save()
     return row_id
 
@@ -222,18 +216,15 @@ def save_work_history(df_new):
         df_final = df_combined.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
         
     df_final = df_final.sort_values(by=['date', 'name'])
-    
     ws.clear()
     
     header = [['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']]
     data_to_write = df_final.fillna("").astype(str).values.tolist()
     all_values = header + data_to_write
-    
     try:
         ws.update(values=all_values, range_name="A1", value_input_option='USER_ENTERED')
     except TypeError:
         ws.update("A1", all_values, value_input_option='USER_ENTERED')
-        
     clear_cache_after_save()
     return len(df_new)
 
@@ -257,6 +248,7 @@ def set_driver_resignation(name, r_date):
     try:
         cell = ws.find(name)
         if cell:
+            # 5번째 컬럼이 퇴사일
             ws.update_cell(cell.row, 5, r_date)
             clear_cache_after_save()
     except: pass
@@ -322,7 +314,7 @@ def add_reduction_rule(start, end, route, seq, cond):
     clear_cache_after_save()
 
 # ==========================================
-# 4. 날짜 및 스케줄 계산 로직 (스마트 비교 추가)
+# 4. 날짜 및 스케줄 계산 로직 (강력한 정규화)
 # ==========================================
 def is_holiday(date_obj):
     return date_obj in kr_holidays
@@ -389,15 +381,15 @@ def get_reduction_rules():
             })
     return rules
 
-# [핵심] 숫자 비교 정규화 함수
+# [강력해진 정규화] 숫자, 문자, 소수점 모두 정수로 통일
 def normalize_key(val):
+    if pd.isna(val) or val == "": return ""
     s = str(val).strip()
-    # 211.0 같은 소수점 제거
-    if s.endswith(".0"): s = s[:-2]
-    # 03 같은 앞자리 0 제거 후 비교 (선택사항, 일단은 int 변환 시도)
     try:
+        # 소수점 포함 숫자(211.0)도 정수(211)로 변환 후 문자열로
         return str(int(float(s)))
     except:
+        # 변환 실패 시(문자 포함) 그대로 반환
         return s
 
 def is_reduction_target(date_str, route, seq, rules):
@@ -406,13 +398,12 @@ def is_reduction_target(date_str, route, seq, rules):
     except: return False
     is_holi = is_holiday_or_weekend(d)
     
-    # 비교 대상 정규화 (211.0 -> 211, " 3 " -> "3")
+    # 핵심: 들어온 데이터도, 규칙 데이터도 모두 강력 정규화 후 비교
     tgt_route = normalize_key(route)
     tgt_seq = normalize_key(seq)
     
     for r in rules:
         if r['start'] <= date_str <= r['end']:
-            # 규칙 값도 정규화
             rule_route = normalize_key(r['route'])
             rule_seq = normalize_key(r['seq'])
             
@@ -447,84 +438,6 @@ def log_login_access(username, name):
         ws.append_row([timestamp, username, name, "Login Success"])
         st.cache_data.clear()
     except: pass
-
-def parse_roster_excel(file):
-    df_raw = pd.read_excel(file, header=None)
-    date_rows = []
-    for idx, row in df_raw.iterrows():
-        val = str(row[0])
-        if "202" in val or "년" in val:
-            try:
-                if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
-                    date_rows.append(idx)
-            except: pass
-            
-    extracted_data = []
-    
-    for start_row in date_rows:
-        try:
-            year = int(str(df_raw.iloc[start_row, 0]).replace("년","").strip())
-            month = int(str(df_raw.iloc[start_row, 3]).replace("월","").strip())
-            day = int(str(df_raw.iloc[start_row, 5]).replace("일","").strip())
-            current_date = datetime(year, month, day).strftime("%Y-%m-%d")
-        except: continue 
-
-        cols_map = [
-            {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7},
-            {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15}
-        ]
-        
-        for side in cols_map:
-            last_route = None
-            for r_offset in range(3, 75): 
-                curr_idx = start_row + r_offset
-                if curr_idx >= len(df_raw): break
-                
-                raw_route = df_raw.iloc[curr_idx, side['route']]
-                if pd.notnull(raw_route) and str(raw_route).strip() != "":
-                    last_route = str(raw_route).strip()
-                current_route = last_route if last_route else ""
-
-                raw_seq = df_raw.iloc[curr_idx, side['seq']]
-                raw_car = df_raw.iloc[curr_idx, side['car']]
-                
-                current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
-                
-                try:
-                    raw_car_str = str(raw_car).strip()
-                    digits_only = re.sub(r'[^0-9]', '', raw_car_str)
-                    car_num = int(digits_only)
-                    is_valid_car = (5001 <= car_num <= 5300)
-                    current_car = str(car_num)
-                except:
-                    is_valid_car = False
-                    current_car = ""
-
-                if not (current_route and current_seq and is_valid_car):
-                    continue
-                
-                am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
-                am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
-                am_final = am_sub if am_sub else am_fix
-                
-                pm_fix = clean_driver_name(df_raw.iloc[curr_idx, side['pm_fix']])
-                pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
-                pm_final = pm_sub if pm_sub else pm_fix
-                
-                if am_final: 
-                    extracted_data.append({
-                        'date': current_date, 'name': am_final, 'shift': '오전', 
-                        'route': current_route, 'seq': current_seq, 'car': current_car, 
-                        'is_sub': bool(am_sub), 'orig_fix': am_fix
-                    })
-                
-                if pm_final:
-                    extracted_data.append({
-                        'date': current_date, 'name': pm_final, 'shift': '오후', 
-                        'route': current_route, 'seq': current_seq, 'car': current_car, 
-                        'is_sub': bool(pm_sub), 'orig_fix': pm_fix
-                    })
-    return pd.DataFrame(extracted_data)
 
 # ==========================================
 # 6. 관리자 메모장 (Admin Memo) 기능
