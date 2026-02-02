@@ -14,7 +14,6 @@ import re
 # 1. 전역 상수 및 공통 설정
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
-SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 kr_holidays = holidays.KR()
 
 def get_kst_now():
@@ -111,7 +110,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 데이터 저장 (강제 좌표)
+# 3. 데이터 저장 (절대 좌표 강제)
 # ==========================================
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
@@ -313,7 +312,7 @@ def add_reduction_rule(start, end, route, seq, cond):
     clear_cache_after_save()
 
 # ==========================================
-# 4. 날짜 및 스케줄 계산 로직 (스마트 비교 추가)
+# 4. 날짜 및 스케줄 계산 로직
 # ==========================================
 def is_holiday(date_obj):
     return date_obj in kr_holidays
@@ -435,18 +434,16 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 6. 엑셀 파싱 (동적 구간 로직 적용 - 핵심 수정)
+# 6. 엑셀 파싱 (운전자 중심의 유연한 파싱)
 # ==========================================
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
     
-    # 1. 날짜가 적힌 행(Header)들을 모두 찾는다.
+    # 1. 날짜 구분행 찾기
     date_rows = []
     for idx, row in df_raw.iterrows():
         val = str(row[0])
-        # "202x" 또는 "x년"이 포함되고, 같은 줄에 "월", "일"도 있는 경우를 날짜 헤더로 간주
         if ("202" in val or "년" in val):
-            # 좀 더 확실하게 확인 (3열, 5열 쯤에 월/일이 보통 있음)
             try:
                 if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
                     date_rows.append(idx)
@@ -454,18 +451,15 @@ def parse_roster_excel(file):
             
     extracted_data = []
     
-    # 2. 찾아낸 날짜 행 사이사이를 읽는다.
-    # 예: [0, 79, 158] -> 0~78 읽고, 79~157 읽고...
+    # 2. 날짜별 구간 파싱
     for i in range(len(date_rows)):
         start_row = date_rows[i]
         
-        # 다음 날짜 행이 있으면 거기가 끝, 없으면 파일 끝이 끝
         if i + 1 < len(date_rows):
             end_row = date_rows[i+1]
         else:
             end_row = len(df_raw)
             
-        # 날짜 파싱
         try:
             year = int(str(df_raw.iloc[start_row, 0]).replace("년","").strip())
             month = int(str(df_raw.iloc[start_row, 3]).replace("월","").strip())
@@ -473,45 +467,39 @@ def parse_roster_excel(file):
             current_date = datetime(year, month, day).strftime("%Y-%m-%d")
         except: continue 
 
-        # 3. 해당 구간(start_row ~ end_row) 내의 데이터 읽기
-        # 보통 헤더+제목이 3줄 정도 차지하므로 start_row + 3 부터 시작
         cols_map = [
             {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7},
             {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15}
         ]
         
-        for curr_idx in range(start_row + 3, end_row):
-            for side in cols_map:
+        for side in cols_map:
+            last_route = None
+            
+            for curr_idx in range(start_row + 3, end_row):
                 try:
-                    # 데이터가 없는 빈 줄이나 푸터(Footer)는 건너뛰기
-                    # 노선번호나 차량번호가 없으면 데이터 행이 아니라고 판단
+                    # 1. 노선 (병합 처리)
                     raw_route = df_raw.iloc[curr_idx, side['route']]
-                    if pd.isnull(raw_route) or str(raw_route).strip() == "":
-                        continue
+                    if pd.notnull(raw_route) and str(raw_route).strip() != "":
+                        last_route = str(raw_route).strip()
+                    current_route = last_route if last_route else ""
 
-                    # 노선 (병합된 셀 처리: 윗줄 값 가져오기 로직은 복잡하니, 
-                    # 여기서는 '현재 행에 값이 있으면 쓰고, 없으면 이전 값 사용' 로직은 생략하거나
-                    # 필요시 추가. 보통 엑셀이 병합되어 있으면 첫 행에만 값이 있음)
-                    # -> 단순화: 값이 있는 경우만 읽음. (만약 병합 셀 지원이 필요하면 로직 추가 필요)
-                    current_route = str(raw_route).strip()
-
+                    # 2. 순번 (없어도 OK)
                     raw_seq = df_raw.iloc[curr_idx, side['seq']]
                     current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                     
+                    # 3. 차량번호 (검사 대폭 완화)
                     raw_car = df_raw.iloc[curr_idx, side['car']]
+                    current_car = ""
                     try:
                         raw_car_str = str(raw_car).strip()
                         digits_only = re.sub(r'[^0-9]', '', raw_car_str)
-                        car_num = int(digits_only)
-                        is_valid_car = (5000 <= car_num <= 9999) # 차량번호 범위 대략 체크
-                        current_car = str(car_num)
-                    except:
-                        is_valid_car = False
-                        current_car = ""
+                        if digits_only and int(digits_only) >= 1000: # 1000번 이상이면 일단 인정
+                            current_car = str(int(digits_only))
+                        elif raw_car_str: # 숫자가 아니어도 값이 있으면 저장 (예: "대기")
+                            current_car = raw_car_str
+                    except: pass
 
-                    if not (current_route and current_seq and is_valid_car):
-                        continue
-                    
+                    # 4. 운전자 (가장 중요)
                     am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                     am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
                     am_final = am_sub if am_sub else am_fix
@@ -520,6 +508,11 @@ def parse_roster_excel(file):
                     pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                     pm_final = pm_sub if pm_sub else pm_fix
                     
+                    # [핵심 변경] "운전자가 있으면" 데이터가 불완전해도 일단 저장!
+                    if not (am_final or pm_final):
+                        continue
+                        
+                    # 5. 저장
                     if am_final: 
                         extracted_data.append({
                             'date': current_date, 'name': am_final, 'shift': '오전', 
