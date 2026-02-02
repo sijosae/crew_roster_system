@@ -11,7 +11,7 @@ import holidays
 import re
 
 # ==========================================
-# 1. 전역 상수 및 공통 설정 (SORT_ORDER 복구됨)
+# 1. 전역 상수 및 공통 설정
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -313,7 +313,7 @@ def add_reduction_rule(start, end, route, seq, cond):
     clear_cache_after_save()
 
 # ==========================================
-# 4. 날짜 및 스케줄 계산 로직 (스마트 괄호 처리 추가)
+# 4. 날짜 및 스케줄 계산 로직
 # ==========================================
 def is_holiday(date_obj):
     return date_obj in kr_holidays
@@ -325,20 +325,9 @@ def clean_driver_name(name):
     if pd.isna(name): return "" 
     s = str(name).strip()
     if s.lower() == "nan" or s == "": return ""
-    
-    # 1. 전각 괄호를 반각으로 통일
     s = s.replace("（", "(").replace("）", ")")
-    
-    # 2. 괄호와 그 안의 내용 제거
-    # (단, 문자열 전체가 괄호인 경우는 이름 자체일 수 있으므로 주의해야 하나,
-    # 보통 배차표에는 홍길동(대타) 형식이 많으므로 일단 제거 후 남은게 없으면 원본 사용 등 고려)
-    # 여기서는 "홍길동(대타)" -> "홍길동"으로 만듦.
-    
-    # 만약 "(홍길동)" 처럼 괄호 안에만 이름이 있는 경우를 대비해
-    # 괄호 제거 후 문자열이 비어버리면, 괄호만 벗겨낸 값을 쓴다.
     s_removed = re.sub(r'\(.*?\)', '', s).strip()
-    
-    if not s_removed: # 괄호 다 지웠더니 아무것도 안 남음 (예: (홍길동))
+    if not s_removed: 
         s_stripped = s.replace("(", "").replace(")", "").strip()
         return s_stripped
     else:
@@ -450,7 +439,7 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 6. 엑셀 파싱 (차량/노선 누락 완벽 대응)
+# 6. 엑셀 파싱 (쓰레기 데이터 필터링 추가)
 # ==========================================
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
@@ -468,6 +457,7 @@ def parse_roster_excel(file):
     
     for i in range(len(date_rows)):
         start_row = date_rows[i]
+        
         if i + 1 < len(date_rows):
             end_row = date_rows[i+1]
         else:
@@ -500,17 +490,20 @@ def parse_roster_excel(file):
                     raw_seq = df_raw.iloc[curr_idx, side['seq']]
                     current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                     
-                    # 3. 차량번호 (가장 큰 문제였던 부분 - 유연하게 처리)
+                    # 3. 차량번호
                     raw_car = df_raw.iloc[curr_idx, side['car']]
                     current_car = ""
                     if pd.notnull(raw_car):
                         raw_car_str = str(raw_car).strip()
-                        # 숫자가 포함되어 있으면 추출
-                        digits = re.sub(r'[^0-9]', '', raw_car_str)
-                        if digits and int(digits) > 100: # 대략 100 이상이면 차량번호로 간주
-                            current_car = str(int(digits))
-                        elif raw_car_str: # 숫자는 없지만 텍스트가 있으면 (예: 예비, 대기) 저장
-                            current_car = raw_car_str
+                        # [필터] 명/대 같은 단어만 딸랑 있으면 삭제
+                        if raw_car_str in ['명', '대', '계']: 
+                            current_car = ""
+                        else:
+                            digits = re.sub(r'[^0-9]', '', raw_car_str)
+                            if digits and int(digits) > 100: 
+                                current_car = str(int(digits))
+                            elif raw_car_str: 
+                                current_car = raw_car_str
 
                     # 4. 운전자
                     am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
@@ -521,12 +514,21 @@ def parse_roster_excel(file):
                     pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                     pm_final = pm_sub if pm_sub else pm_fix
                     
-                    # [최종 판단] 차량번호나 노선이 없어도, "이름"이 있으면 무조건 저장!
+                    # [강력 필터] 사람 이름에 숫자가 있거나, 통계용 단어면 데이터 아님!
+                    # 예: "5명", "10대", "합계", "총원" 등은 사람 아님
+                    invalid_keywords = ["합계", "총", "계", "명", "대", "원", "투입", "잔류", "사고", "정비"]
+                    
+                    if am_final:
+                        if any(char.isdigit() for char in am_final) or any(k in am_final for k in invalid_keywords):
+                            am_final = ""
+                    
+                    if pm_final:
+                        if any(char.isdigit() for char in pm_final) or any(k in pm_final for k in invalid_keywords):
+                            pm_final = ""
+
+                    # [최종 저장 조건] 유효한 이름이 하나라도 있어야 함
                     if not (am_final or pm_final):
                         continue
-                    
-                    # 차량번호가 없으면 "-" 등으로라도 채우기 (선택 사항)
-                    if not current_car: current_car = ""
                         
                     if am_final: 
                         extracted_data.append({
