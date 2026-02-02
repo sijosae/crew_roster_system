@@ -11,7 +11,7 @@ import holidays
 import re
 
 # ==========================================
-# 1. 전역 상수 및 공통 설정
+# 1. 전역 상수 및 공통 설정 (SORT_ORDER 복구됨)
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
@@ -111,7 +111,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 데이터 저장 (강제 좌표)
+# 3. 데이터 저장 (절대 좌표 강제)
 # ==========================================
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
@@ -321,7 +321,6 @@ def is_holiday(date_obj):
 def is_holiday_or_weekend(date_obj):
     return date_obj.weekday() >= 5 or date_obj in kr_holidays
 
-# [핵심 수정] 괄호 처리 로직 개선
 def clean_driver_name(name):
     if pd.isna(name): return "" 
     s = str(name).strip()
@@ -330,17 +329,20 @@ def clean_driver_name(name):
     # 1. 전각 괄호를 반각으로 통일
     s = s.replace("（", "(").replace("）", ")")
     
-    # 2. 문자열 전체가 괄호로 감싸져 있다면 괄호만 벗겨냄 (예: "(홍길동)" -> "홍길동")
-    if s.startswith("(") and s.endswith(")"):
-        s = s[1:-1]
-        
-    # 3. 괄호와 그 안의 내용 제거 (예: "홍길동(대타)" -> "홍길동")
-    # (주의: 2번에서 괄호를 벗긴 후에도 괄호가 남아있거나, 부분적으로 괄호가 있는 경우 처리)
-    s = re.sub(r'\(.*?\)', '', s)
+    # 2. 괄호와 그 안의 내용 제거
+    # (단, 문자열 전체가 괄호인 경우는 이름 자체일 수 있으므로 주의해야 하나,
+    # 보통 배차표에는 홍길동(대타) 형식이 많으므로 일단 제거 후 남은게 없으면 원본 사용 등 고려)
+    # 여기서는 "홍길동(대타)" -> "홍길동"으로 만듦.
     
-    # 4. 공백 제거
-    s = s.replace(" ", "").strip()
-    return s
+    # 만약 "(홍길동)" 처럼 괄호 안에만 이름이 있는 경우를 대비해
+    # 괄호 제거 후 문자열이 비어버리면, 괄호만 벗겨낸 값을 쓴다.
+    s_removed = re.sub(r'\(.*?\)', '', s).strip()
+    
+    if not s_removed: # 괄호 다 지웠더니 아무것도 안 남음 (예: (홍길동))
+        s_stripped = s.replace("(", "").replace(")", "").strip()
+        return s_stripped
+    else:
+        return s_removed
 
 def calculate_auto_shift(group_name, target_date_str):
     if not group_name or "조" not in group_name: return None
@@ -448,7 +450,7 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 6. 엑셀 파싱 (병합 셀 & 마지막 줄 완벽 대응)
+# 6. 엑셀 파싱 (차량/노선 누락 완벽 대응)
 # ==========================================
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
@@ -466,7 +468,6 @@ def parse_roster_excel(file):
     
     for i in range(len(date_rows)):
         start_row = date_rows[i]
-        
         if i + 1 < len(date_rows):
             end_row = date_rows[i+1]
         else:
@@ -489,7 +490,7 @@ def parse_roster_excel(file):
             
             for curr_idx in range(start_row + 3, end_row):
                 try:
-                    # 1. 노선 (병합 처리)
+                    # 1. 노선
                     raw_route = df_raw.iloc[curr_idx, side['route']]
                     if pd.notnull(raw_route) and str(raw_route).strip() != "":
                         last_route = str(raw_route).strip()
@@ -499,19 +500,19 @@ def parse_roster_excel(file):
                     raw_seq = df_raw.iloc[curr_idx, side['seq']]
                     current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                     
-                    # 3. 차량번호 (검사 대폭 완화)
+                    # 3. 차량번호 (가장 큰 문제였던 부분 - 유연하게 처리)
                     raw_car = df_raw.iloc[curr_idx, side['car']]
                     current_car = ""
-                    try:
+                    if pd.notnull(raw_car):
                         raw_car_str = str(raw_car).strip()
-                        digits_only = re.sub(r'[^0-9]', '', raw_car_str)
-                        if digits_only and int(digits_only) >= 1000:
-                            current_car = str(int(digits_only))
-                        elif raw_car_str: 
+                        # 숫자가 포함되어 있으면 추출
+                        digits = re.sub(r'[^0-9]', '', raw_car_str)
+                        if digits and int(digits) > 100: # 대략 100 이상이면 차량번호로 간주
+                            current_car = str(int(digits))
+                        elif raw_car_str: # 숫자는 없지만 텍스트가 있으면 (예: 예비, 대기) 저장
                             current_car = raw_car_str
-                    except: pass
 
-                    # 4. 운전자 확인 (가장 중요: 이름이 있으면 무조건 읽는다)
+                    # 4. 운전자
                     am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                     am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
                     am_final = am_sub if am_sub else am_fix
@@ -520,9 +521,12 @@ def parse_roster_excel(file):
                     pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                     pm_final = pm_sub if pm_sub else pm_fix
                     
-                    # [핵심] 운전자 이름이 하나라도 있으면, 다른 정보가 비어있어도 저장!
+                    # [최종 판단] 차량번호나 노선이 없어도, "이름"이 있으면 무조건 저장!
                     if not (am_final or pm_final):
                         continue
+                    
+                    # 차량번호가 없으면 "-" 등으로라도 채우기 (선택 사항)
+                    if not current_car: current_car = ""
                         
                     if am_final: 
                         extracted_data.append({
