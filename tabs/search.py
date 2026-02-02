@@ -9,19 +9,25 @@ import utils
 # ==========================================
 def _init_search_session_state():
     now = utils.get_kst_now()
+    # 공통 상태 변수 (연간 통계 탭용)
     if 'search_stat_year' not in st.session_state:
         st.session_state.search_stat_year = now.year
     if 'search_stat_month' not in st.session_state:
         st.session_state.search_stat_month = now.month
+        
+    # [수정] 차량 통계 탭용 별도 변수 (독립 운용)
+    if 'veh_year' not in st.session_state:
+        st.session_state.veh_year = now.year
+    if 'veh_month' not in st.session_state:
+        st.session_state.veh_month = now.month
 
-# --- [탭2] 연간 통계용 화살표 콜백 ---
+# --- 탭2(연간통계) 콜백 ---
 def _prev_month_search():
     if st.session_state.search_stat_month == 1:
         st.session_state.search_stat_year -= 1
         st.session_state.search_stat_month = 12
     else:
         st.session_state.search_stat_month -= 1
-    # 탭2 위젯 동기화
     st.session_state.sb_search_year = st.session_state.search_stat_year
 
 def _next_month_search():
@@ -30,32 +36,24 @@ def _next_month_search():
         st.session_state.search_stat_month = 1
     else:
         st.session_state.search_stat_month += 1
-    # 탭2 위젯 동기화
     st.session_state.sb_search_year = st.session_state.search_stat_year
 
-# --- [탭3] 차량별 현황용 화살표 콜백 (신규 추가) ---
+# --- 탭3(차량통계) 콜백 ---
 def _prev_month_veh():
-    if st.session_state.search_stat_month == 1:
-        st.session_state.search_stat_year -= 1
-        st.session_state.search_stat_month = 12
+    if st.session_state.veh_month == 1:
+        st.session_state.veh_year -= 1
+        st.session_state.veh_month = 12
     else:
-        st.session_state.search_stat_month -= 1
-    # [핵심] 탭3 위젯(sb_veh_...) 강제 동기화
-    st.session_state.sb_veh_year = st.session_state.search_stat_year
-    st.session_state.sb_veh_month = st.session_state.search_stat_month
-
+        st.session_state.veh_month -= 1
+        
 def _next_month_veh():
-    if st.session_state.search_stat_month == 12:
-        st.session_state.search_stat_year += 1
-        st.session_state.search_stat_month = 1
+    if st.session_state.veh_month == 12:
+        st.session_state.veh_year += 1
+        st.session_state.veh_month = 1
     else:
-        st.session_state.search_stat_month += 1
-    # [핵심] 탭3 위젯(sb_veh_...) 강제 동기화
-    st.session_state.sb_veh_year = st.session_state.search_stat_year
-    st.session_state.sb_veh_month = st.session_state.search_stat_month
+        st.session_state.veh_month += 1
 
 def _get_history_dict():
-    """조(Group) 히스토리 로드"""
     gh = utils.load_data("group_history")
     h_dict = {}
     if not gh.empty:
@@ -66,7 +64,7 @@ def _get_history_dict():
     return h_dict
 
 # ==========================================
-# 2. [탭1] 상세 이력 조회
+# 2. [탭1] 상세 이력 조회 (기존 유지)
 # ==========================================
 def _render_detail_search(is_admin=False):
     df = utils.load_data("schedules")
@@ -207,7 +205,7 @@ def _render_yearly_stats_logic():
     else: st.info("데이터가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 근무자 현황 (화살표 수정 완료)
+# 4. [탭3] 월간 차량별 근무자 현황 (수정됨)
 # ==========================================
 def _highlight_gamcha_cells(val):
     if val == "감차":
@@ -217,35 +215,31 @@ def _highlight_gamcha_cells(val):
 def _render_vehicle_stats_logic():
     _init_search_session_state()
     
-    # 날짜 컨트롤 (수정: 전용 콜백 사용)
+    # UI Layout
     c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
     now = utils.get_kst_now()
     
+    # [수정] Session State key를 직접 바인딩하여 동기화 문제 해결
     with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c_yr: 
         year_range = range(2023, now.year + 3)
-        try: y_idx = list(year_range).index(st.session_state.search_stat_year)
+        try: y_idx = list(year_range).index(st.session_state.veh_year)
         except: y_idx = 0
-        sel_year = st.selectbox("년도", year_range, index=y_idx, key='sb_veh_year', label_visibility="collapsed")
-        if sel_year != st.session_state.search_stat_year:
-            st.session_state.search_stat_year = sel_year; st.rerun()
+        st.selectbox("년도", year_range, index=y_idx, key='veh_year', label_visibility="collapsed")
 
     with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
     with c_mo: 
         month_range = range(1, 13)
-        sel_month = st.selectbox("월", month_range, index=st.session_state.search_stat_month - 1, key='sb_veh_month', label_visibility="collapsed")
-        if sel_month != st.session_state.search_stat_month:
-            st.session_state.search_stat_month = sel_month; st.rerun()
+        st.selectbox("월", month_range, index=st.session_state.veh_month - 1, key='veh_month', label_visibility="collapsed")
 
-    # [수정] 전용 콜백 함수 연결
     with c_prev: st.button("◀", key="v_prev_btn", on_click=_prev_month_veh)
     with c_next: st.button("▶", key="v_next_btn", on_click=_next_month_veh)
     
     st.divider()
 
     # 데이터 처리
-    year = st.session_state.search_stat_year
-    month = st.session_state.search_stat_month
+    year = st.session_state.veh_year
+    month = st.session_state.veh_month
     filter_ym = f"{year}-{month:02d}"
     
     reduction_rules = utils.get_reduction_rules()
