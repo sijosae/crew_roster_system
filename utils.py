@@ -14,6 +14,8 @@ import re
 # 1. 전역 상수 및 공통 설정
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
+# [복구됨] 정렬 순서 정의 (이게 없어서 에러가 났습니다)
+SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 kr_holidays = holidays.KR()
 
 def get_kst_now():
@@ -110,7 +112,7 @@ def clear_cache_after_save():
     st.cache_data.clear()
 
 # ==========================================
-# 3. 데이터 저장 (절대 좌표 강제)
+# 3. 데이터 저장 (강제 좌표)
 # ==========================================
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
@@ -434,12 +436,11 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 6. 엑셀 파싱 (운전자 중심의 유연한 파싱)
+# 6. 엑셀 파싱 (병합 셀 & 마지막 줄 완벽 대응)
 # ==========================================
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
     
-    # 1. 날짜 구분행 찾기
     date_rows = []
     for idx, row in df_raw.iterrows():
         val = str(row[0])
@@ -451,7 +452,6 @@ def parse_roster_excel(file):
             
     extracted_data = []
     
-    # 2. 날짜별 구간 파싱
     for i in range(len(date_rows)):
         start_row = date_rows[i]
         
@@ -483,7 +483,7 @@ def parse_roster_excel(file):
                         last_route = str(raw_route).strip()
                     current_route = last_route if last_route else ""
 
-                    # 2. 순번 (없어도 OK)
+                    # 2. 순번
                     raw_seq = df_raw.iloc[curr_idx, side['seq']]
                     current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                     
@@ -493,13 +493,13 @@ def parse_roster_excel(file):
                     try:
                         raw_car_str = str(raw_car).strip()
                         digits_only = re.sub(r'[^0-9]', '', raw_car_str)
-                        if digits_only and int(digits_only) >= 1000: # 1000번 이상이면 일단 인정
+                        if digits_only and int(digits_only) >= 1000:
                             current_car = str(int(digits_only))
-                        elif raw_car_str: # 숫자가 아니어도 값이 있으면 저장 (예: "대기")
+                        elif raw_car_str: 
                             current_car = raw_car_str
                     except: pass
 
-                    # 4. 운전자 (가장 중요)
+                    # 4. 운전자 확인 (가장 중요: 이름이 있으면 무조건 읽는다)
                     am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                     am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
                     am_final = am_sub if am_sub else am_fix
@@ -508,11 +508,10 @@ def parse_roster_excel(file):
                     pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                     pm_final = pm_sub if pm_sub else pm_fix
                     
-                    # [핵심 변경] "운전자가 있으면" 데이터가 불완전해도 일단 저장!
+                    # [핵심] 운전자 이름이 하나라도 있으면, 다른 정보가 비어있어도 저장!
                     if not (am_final or pm_final):
                         continue
                         
-                    # 5. 저장
                     if am_final: 
                         extracted_data.append({
                             'date': current_date, 'name': am_final, 'shift': '오전', 
