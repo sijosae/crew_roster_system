@@ -1,22 +1,32 @@
 import streamlit as st
 import pandas as pd
 import io
+import calendar
 import utils
-import calendar  # 추가됨
-from datetime import datetime
 
 # ==========================================
-# 1. 내부 헬퍼 함수 (기존 유지)
+# 1. 내부 헬퍼 함수
 # ==========================================
 def _init_search_session_state():
     now = utils.get_kst_now()
     if 'search_stat_year' not in st.session_state:
         st.session_state.search_stat_year = now.year
-    # 차량 조회용 세션 상태 추가
-    if 'car_view_year' not in st.session_state:
-        st.session_state.car_view_year = now.year
-    if 'car_view_month' not in st.session_state:
-        st.session_state.car_view_month = now.month
+    if 'search_stat_month' not in st.session_state:
+        st.session_state.search_stat_month = now.month
+
+def _prev_month_search():
+    if st.session_state.search_stat_month == 1:
+        st.session_state.search_stat_year -= 1
+        st.session_state.search_stat_month = 12
+    else:
+        st.session_state.search_stat_month -= 1
+
+def _next_month_search():
+    if st.session_state.search_stat_month == 12:
+        st.session_state.search_stat_year += 1
+        st.session_state.search_stat_month = 1
+    else:
+        st.session_state.search_stat_month += 1
 
 def _get_history_dict():
     """조(Group) 히스토리 로드"""
@@ -29,96 +39,288 @@ def _get_history_dict():
         for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
     return h_dict
 
-# ... [기존 _render_detail_search, _highlight_consecutive_months, _render_monthly_stats_logic 함수는 그대로 유지] ...
+# ==========================================
+# 2. [탭1] 상세 이력 조회 (기존 유지)
+# ==========================================
+def _render_detail_search(is_admin=False):
+    df = utils.load_data("schedules")
+    if df.empty:
+        st.info("데이터가 없습니다.")
+        return
+
+    search_term = st.text_input("🔍 이름 또는 비고 검색", placeholder="이름을 입력하세요", key="search_term_input")
+    
+    if search_term:
+        df = df[
+            df['name'].astype(str).str.contains(search_term) | 
+            df['note'].astype(str).str.contains(search_term)
+        ]
+
+    if not df.empty:
+        h_dict = _get_history_dict()
+        orig_shifts = []
+        for _, row in df.iterrows():
+            d_str = row['date']
+            name = row['name']
+            grp = utils.get_group_from_dict(h_dict, name, d_str)
+            auto = utils.calculate_auto_shift(grp, d_str)
+            if grp and auto:
+                orig_shifts.append(f"{auto} ({grp})")
+            else:
+                orig_shifts.append("-")
+        
+        df['orig_shift'] = orig_shifts
+        display_cols = ['date', 'name', 'type', 'orig_shift', 'note']
+        df_display = df[display_cols].copy()
+        df_display.columns = ['날짜', '이름', '구분', '원래 근무', '비고']
+        df_display = df_display.sort_values(by='날짜', ascending=False)
+
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_display.to_excel(writer, index=False, sheet_name='조회결과')
+        processed_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 엑셀로 다운로드",
+            data=processed_data,
+            file_name="배차조회결과.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="btn_down_detail"
+        )
+    else:
+        st.info("검색 결과가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 현황 (신규 추가)
+# 3. [탭2] 연간 근무 집계 (기존 유지)
 # ==========================================
-def _render_monthly_car_matrix():
+def _highlight_consecutive_months(data):
+    bg_styles = pd.DataFrame('', index=data.index, columns=data.columns)
+    month_cols = [f"{i}월" for i in range(1, 13)]
+    for idx, row in data.iterrows():
+        counts = [row[c] for c in month_cols]
+        mask = [False] * 12
+        for i in range(10):
+            if counts[i] >= 25 and counts[i+1] >= 25 and counts[i+2] >= 25:
+                mask[i] = True
+                mask[i+1] = True
+                mask[i+2] = True
+        for col_idx, is_highlight in enumerate(mask):
+            if is_highlight:
+                col_name = month_cols[col_idx]
+                bg_styles.at[idx, col_name] = 'background-color: #ffcccc; color: #990000; font-weight: bold;'
+    return bg_styles
+
+def _render_yearly_stats_logic():
+    _init_search_session_state()
+    c_yr_txt, c_yr, c_empty = st.columns([0.2, 0.4, 2])
+    now = utils.get_kst_now()
+    
+    with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
+    with c_yr: 
+        year_range = range(2023, now.year + 3)
+        try: y_idx = list(year_range).index(st.session_state.search_stat_year)
+        except: y_idx = 0
+        sel_year = st.selectbox("년도", year_range, index=y_idx, key='sb_search_year', label_visibility="collapsed")
+        if sel_year != st.session_state.search_stat_year:
+            st.session_state.search_stat_year = sel_year
+            st.rerun()
+    
+    st.info("💡 **25일 이상** 근무한 달이 **3개월 연속**되면 빨간색으로 표시됩니다.")
+    st.divider()
+    
+    year = st.session_state.search_stat_year
+    df_drivers = utils.load_data("drivers")
+    if df_drivers.empty: st.warning("등록된 승무원이 없습니다."); return
+        
+    df_work = utils.load_data("work_history")
+    result_data = []
+    sorted_drivers = df_drivers.sort_values(by='name')['name'].tolist()
+    
+    if not df_work.empty:
+        df_work['dt'] = pd.to_datetime(df_work['date'], errors='coerce')
+        df_year = df_work[df_work['dt'].dt.year == year]
+    else:
+        df_year = pd.DataFrame()
+
+    for name in sorted_drivers:
+        row_data = {"이름": name}
+        total_year = 0
+        my_data = df_year[df_year['name'] == name] if not df_year.empty else pd.DataFrame()
+        for m in range(1, 13):
+            if not my_data.empty:
+                cnt = len(my_data[(my_data['dt'].dt.month == m) & (my_data['shift'].isin(['오전', '오후']))])
+            else: cnt = 0
+            row_data[f"{m}월"] = cnt
+            total_year += cnt
+        row_data["연간 합계"] = total_year
+        result_data.append(row_data)
+        
+    if result_data:
+        df_res = pd.DataFrame(result_data)
+        cols = ["이름"] + [f"{i}월" for i in range(1, 13)] + ["연간 합계"]
+        df_res = df_res[cols]
+        st.dataframe(
+            df_res.style.apply(_highlight_consecutive_months, axis=None),
+            use_container_width=True, hide_index=True,
+            column_config={
+                "이름": st.column_config.TextColumn("이름", width="medium"),
+                "연간 합계": st.column_config.NumberColumn("합계", format="%d일")
+            }, height=600
+        )
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_res.to_excel(writer, index=False, sheet_name=f'{year}년_근무집계')
+        processed_data = output.getvalue()
+        st.download_button(
+            label="📥 집계표 엑셀 다운로드", data=processed_data,
+            file_name=f"{year}년_승무원_연간근무현황.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="btn_down_stats_yearly"
+        )
+    else: st.info("데이터가 없습니다.")
+
+# ==========================================
+# 4. [탭3] 월간 차량별 근무자 현황 (신규 추가)
+# ==========================================
+def _render_vehicle_stats_logic():
     _init_search_session_state()
     
-    # --- 날짜 선택 컨트롤 ---
-    c1, c2, c_empty = st.columns([0.4, 0.4, 2])
-    with c1:
-        sel_year = st.selectbox("연도", range(2024, 2028), index=datetime.now().year - 2024, key="car_yr")
-    with c2:
-        sel_month = st.selectbox("월", range(1, 13), index=datetime.now().month - 1, key="car_mo")
+    # 날짜 컨트롤
+    c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
+    now = utils.get_kst_now()
     
-    st.info("💡 가로축은 **날짜**, 세로축은 **차량번호**입니다. (표시: 오전근무자 / 오후근무자)")
+    with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
+    with c_yr: 
+        year_range = range(2023, now.year + 3)
+        try: y_idx = list(year_range).index(st.session_state.search_stat_year)
+        except: y_idx = 0
+        sel_year = st.selectbox("년도", year_range, index=y_idx, key='sb_veh_year', label_visibility="collapsed")
+        if sel_year != st.session_state.search_stat_year:
+            st.session_state.search_stat_year = sel_year; st.rerun()
 
-    # 데이터 로드
+    with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
+    with c_mo: 
+        month_range = range(1, 13)
+        sel_month = st.selectbox("월", month_range, index=st.session_state.search_stat_month - 1, key='sb_veh_month', label_visibility="collapsed")
+        if sel_month != st.session_state.search_stat_month:
+            st.session_state.search_stat_month = sel_month; st.rerun()
+
+    with c_prev: st.button("◀", key="v_prev_btn", on_click=_prev_month_search)
+    with c_next: st.button("▶", key="v_next_btn", on_click=_next_month_search)
+    
+    st.divider()
+
+    # 데이터 처리
+    year = st.session_state.search_stat_year
+    month = st.session_state.search_stat_month
+    filter_ym = f"{year}-{month:02d}"
+    
     df_work = utils.load_data("work_history")
+    
     if df_work.empty:
-        st.warning("배차 데이터(work_history)가 없습니다.")
+        st.info("근무 데이터가 없습니다.")
         return
 
-    # 해당 월 데이터 필터링
-    df_work['dt'] = pd.to_datetime(df_work['date'], errors='coerce')
-    df_target = df_work[(df_work['dt'].dt.year == sel_year) & (df_work['dt'].dt.month == sel_month)].copy()
-
-    if df_target.empty:
-        st.info(f"{sel_year}년 {sel_month}월에 해당하는 데이터가 없습니다.")
+    # 1. 해당 월 데이터 필터링
+    df_month = df_work[df_work['date'].astype(str).str.startswith(filter_ym)]
+    
+    if df_month.empty:
+        st.info(f"{year}년 {month}월 데이터가 없습니다.")
         return
 
-    # 데이터 가공: 오전/오후 합치기
-    # 1. 차량번호 숫자로 변환 (정렬용)
-    df_target['car'] = pd.to_numeric(df_target['car'], errors='coerce')
-    df_target = df_target.dropna(subset=['car'])
+    # 2. 차량 목록 추출 및 정렬
+    # car 컬럼이 있는 데이터만, 그리고 빈 값 제외
+    valid_cars = df_month[df_month['car'].astype(str).str.strip() != ""]['car'].unique()
     
-    # 2. 피벗 생성을 위한 결합 함수
-    def get_combined_drivers(group):
-        am = group[group['shift'] == '오전']['name'].iloc[0] if not group[group['shift'] == '오전'].empty else "-"
-        pm = group[group['shift'] == '오후']['name'].iloc[0] if not group[group['shift'] == '오후'].empty else "-"
-        return f"{am} / {pm}"
-
-    # 3. 피벗 테이블 생성
-    # index: 차량, columns: 날짜(일만 표시), values: 결합된 이름
-    df_target['day'] = df_target['dt'].dt.day
-    matrix = df_target.groupby(['car', 'day']).apply(get_combined_drivers).unstack(fill_value="-")
-
-    # 해당 월의 모든 날짜(1일~말일) 컬럼 보장
-    last_day = calendar.monthrange(sel_year, sel_month)[1]
-    all_days = list(range(1, last_day + 1))
-    for d in all_days:
-        if d not in matrix.columns:
-            matrix[d] = "-"
+    # 숫자 변환 가능한지 확인 후 정렬 (문자열 섞여있을 수 있음 대비)
+    def try_int(x):
+        try: return int(x)
+        except: return 999999
     
-    # 컬럼 순서 정렬 및 차량번호 정렬
-    matrix = matrix[all_days].sort_index()
+    sorted_cars = sorted(valid_cars, key=try_int)
     
-    # 컬럼명을 "1일", "2일"... 형태로 변경
-    matrix.columns = [f"{d}일" for d in matrix.columns]
-    matrix.index.name = "차량번호"
-
-    # 테이블 출력
-    st.dataframe(matrix, use_container_width=True, height=600)
-
-    # 엑셀 다운로드
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        matrix.to_excel(writer, sheet_name='차량별현황')
-    processed_data = output.getvalue()
+    # 3. 데이터 매핑 (빠른 조회를 위해 딕셔너리로 변환)
+    # Key: (day, car, shift), Value: name
+    schedule_map = {}
+    for _, row in df_month.iterrows():
+        try:
+            d = int(pd.to_datetime(row['date']).day)
+            c = str(row['car']).strip()
+            s = str(row['shift']).strip() # 오전, 오후
+            n = str(row['name']).strip()
+            schedule_map[(d, c, s)] = n
+        except: continue
+            
+    # 4. 테이블 생성 (차량별 오전/오후 2줄씩)
+    _, last_day = calendar.monthrange(year, month)
     
-    st.download_button(
-        label="📥 차량별 현황 엑셀 다운로드",
-        data=processed_data,
-        file_name=f"{sel_year}년{sel_month}월_차량별_배차현황.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    table_data = []
+    
+    for car in sorted_cars:
+        # 오전 행
+        row_am = {'차량번호': car, '구분': '오전'}
+        # 오후 행
+        row_pm = {'차량번호': car, '구분': '오후'}
+        
+        for d in range(1, last_day + 1):
+            am_name = schedule_map.get((d, car, '오전'), "")
+            pm_name = schedule_map.get((d, car, '오후'), "")
+            
+            row_am[f"{d}일"] = am_name
+            row_pm[f"{d}일"] = pm_name
+            
+        table_data.append(row_am)
+        table_data.append(row_pm)
+        
+    # 5. 출력
+    if table_data:
+        df_res = pd.DataFrame(table_data)
+        
+        # 컬럼 순서 지정
+        cols = ['차량번호', '구분'] + [f"{d}일" for d in range(1, last_day + 1)]
+        df_res = df_res[cols]
+        
+        st.dataframe(
+            df_res,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "차량번호": st.column_config.TextColumn("차량", width="small"),
+                "구분": st.column_config.TextColumn("근무", width="small")
+            },
+            height=600
+        )
+        
+        # 엑셀 다운로드
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_res.to_excel(writer, index=False, sheet_name=f'{month}월_차량별현황')
+        processed_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 차량별 현황 엑셀 다운로드",
+            data=processed_data,
+            file_name=f"{year}년_{month}월_차량별근무현황.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="btn_down_vehicle_stats"
+        )
+    else:
+        st.info("표시할 데이터가 없습니다.")
 
 # ==========================================
-# 메인 렌더링 함수 (수정됨)
+# 메인 렌더링 함수
 # ==========================================
 def render_view_manage_tab():
     st.subheader("📊 데이터 조회 (관리자)")
     t1, t2, t3 = st.tabs(["🔍 상세 이력 조회", "📅 연간 근무 집계", "🚌 월간 차량별 현황"])
     with t1: _render_detail_search(is_admin=True)
-    with t2: _render_monthly_stats_logic()
-    with t3: _render_monthly_car_matrix()
+    with t2: _render_yearly_stats_logic()
+    with t3: _render_vehicle_stats_logic()
 
 def render_public_search_tab():
     st.subheader("📊 데이터 조회")
     t1, t2, t3 = st.tabs(["🔍 상세 이력 조회", "📅 연간 근무 집계", "🚌 월간 차량별 현황"])
     with t1: _render_detail_search(is_admin=False)
-    with t2: _render_monthly_stats_logic()
-    with t3: _render_monthly_car_matrix()
+    with t2: _render_yearly_stats_logic()
+    with t3: _render_vehicle_stats_logic()
