@@ -181,8 +181,14 @@ def _render_yearly_stats_logic():
     else: st.info("데이터가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 근무자 현황 (신규 추가)
+# 4. [탭3] 월간 차량별 근무자 현황 (감차 로직 추가)
 # ==========================================
+def _highlight_gamcha_cells(val):
+    """ '감차' 텍스트가 있는 셀에 빨간 배경 스타일 적용 """
+    if val == "감차":
+        return 'background-color: #ffcccc; color: #cc0000; font-weight: bold;'
+    return ''
+
 def _render_vehicle_stats_logic():
     _init_search_session_state()
     
@@ -216,6 +222,9 @@ def _render_vehicle_stats_logic():
     month = st.session_state.search_stat_month
     filter_ym = f"{year}-{month:02d}"
     
+    # [추가] 감차 규칙 로드
+    reduction_rules = utils.get_reduction_rules()
+    
     df_work = utils.load_data("work_history")
     
     if df_work.empty:
@@ -230,18 +239,15 @@ def _render_vehicle_stats_logic():
         return
 
     # 2. 차량 목록 추출 및 정렬
-    # car 컬럼이 있는 데이터만, 그리고 빈 값 제외
     valid_cars = df_month[df_month['car'].astype(str).str.strip() != ""]['car'].unique()
     
-    # 숫자 변환 가능한지 확인 후 정렬 (문자열 섞여있을 수 있음 대비)
     def try_int(x):
         try: return int(x)
         except: return 999999
     
     sorted_cars = sorted(valid_cars, key=try_int)
     
-    # 3. 데이터 매핑 (빠른 조회를 위해 딕셔너리로 변환)
-    # Key: (day, car, shift), Value: name
+    # 3. 데이터 매핑 (감차 판단을 위해 노선/순번 정보도 저장)
     schedule_map = {}
     for _, row in df_month.iterrows():
         try:
@@ -249,26 +255,51 @@ def _render_vehicle_stats_logic():
             c = str(row['car']).strip()
             s = str(row['shift']).strip() # 오전, 오후
             n = str(row['name']).strip()
-            schedule_map[(d, c, s)] = n
+            
+            # [추가] 노선, 순번 정보 저장
+            r_num = str(row.get('route', '')).strip()
+            r_seq = str(row.get('seq', '')).strip()
+            
+            schedule_map[(d, c, s)] = {
+                'name': n,
+                'route': r_num,
+                'seq': r_seq
+            }
         except: continue
             
-    # 4. 테이블 생성 (차량별 오전/오후 2줄씩)
+    # 4. 테이블 생성
     _, last_day = calendar.monthrange(year, month)
-    
     table_data = []
     
     for car in sorted_cars:
-        # 오전 행
         row_am = {'차량번호': car, '구분': '오전'}
-        # 오후 행
         row_pm = {'차량번호': car, '구분': '오후'}
         
         for d in range(1, last_day + 1):
-            am_name = schedule_map.get((d, car, '오전'), "")
-            pm_name = schedule_map.get((d, car, '오후'), "")
+            date_str = f"{year}-{month:02d}-{d:02d}"
             
-            row_am[f"{d}일"] = am_name
-            row_pm[f"{d}일"] = pm_name
+            # 오전 데이터 처리
+            data_am = schedule_map.get((d, car, '오전'))
+            val_am = ""
+            if data_am:
+                # [핵심] 감차 규칙 확인
+                if utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
+                    val_am = "감차"
+                else:
+                    val_am = data_am['name']
+            
+            # 오후 데이터 처리
+            data_pm = schedule_map.get((d, car, '오후'))
+            val_pm = ""
+            if data_pm:
+                # [핵심] 감차 규칙 확인
+                if utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
+                    val_pm = "감차"
+                else:
+                    val_pm = data_pm['name']
+            
+            row_am[f"{d}일"] = val_am
+            row_pm[f"{d}일"] = val_pm
             
         table_data.append(row_am)
         table_data.append(row_pm)
@@ -277,12 +308,12 @@ def _render_vehicle_stats_logic():
     if table_data:
         df_res = pd.DataFrame(table_data)
         
-        # 컬럼 순서 지정
         cols = ['차량번호', '구분'] + [f"{d}일" for d in range(1, last_day + 1)]
         df_res = df_res[cols]
         
+        # [추가] 스타일 적용 (감차 텍스트 강조)
         st.dataframe(
-            df_res,
+            df_res.style.map(_highlight_gamcha_cells),
             use_container_width=True,
             hide_index=True,
             column_config={
@@ -292,7 +323,6 @@ def _render_vehicle_stats_logic():
             height=600
         )
         
-        # 엑셀 다운로드
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_res.to_excel(writer, index=False, sheet_name=f'{month}월_차량별현황')
