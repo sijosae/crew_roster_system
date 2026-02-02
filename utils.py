@@ -14,7 +14,6 @@ import re
 # 1. 전역 상수 및 공통 설정
 # ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
-# [복구됨] 정렬 순서 정의 (이게 없어서 에러가 났습니다)
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 kr_holidays = holidays.KR()
 
@@ -436,7 +435,7 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 6. 엑셀 파싱 (병합 셀 & 마지막 줄 완벽 대응)
+# 6. 엑셀 파싱 (차량번호 필수 + 운전자 필수)
 # ==========================================
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
@@ -477,17 +476,17 @@ def parse_roster_excel(file):
             
             for curr_idx in range(start_row + 3, end_row):
                 try:
-                    # 1. 노선 (병합 처리)
+                    # 노선 (병합 처리)
                     raw_route = df_raw.iloc[curr_idx, side['route']]
                     if pd.notnull(raw_route) and str(raw_route).strip() != "":
                         last_route = str(raw_route).strip()
                     current_route = last_route if last_route else ""
 
-                    # 2. 순번
+                    # 순번
                     raw_seq = df_raw.iloc[curr_idx, side['seq']]
                     current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                     
-                    # 3. 차량번호 (검사 대폭 완화)
+                    # 차량번호
                     raw_car = df_raw.iloc[curr_idx, side['car']]
                     current_car = ""
                     try:
@@ -499,7 +498,7 @@ def parse_roster_excel(file):
                             current_car = raw_car_str
                     except: pass
 
-                    # 4. 운전자 확인 (가장 중요: 이름이 있으면 무조건 읽는다)
+                    # 운전자
                     am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                     am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
                     am_final = am_sub if am_sub else am_fix
@@ -508,8 +507,9 @@ def parse_roster_excel(file):
                     pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                     pm_final = pm_sub if pm_sub else pm_fix
                     
-                    # [핵심] 운전자 이름이 하나라도 있으면, 다른 정보가 비어있어도 저장!
-                    if not (am_final or pm_final):
+                    # [최종 필터] 차량번호도 있어야 하고, 운전자도 있어야 함
+                    # 차량번호가 없는 줄(빈 줄, 헤더 등)은 건너뜀
+                    if not current_car or not (am_final or pm_final):
                         continue
                         
                     if am_final: 
