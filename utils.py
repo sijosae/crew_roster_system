@@ -313,7 +313,7 @@ def add_reduction_rule(start, end, route, seq, cond):
     clear_cache_after_save()
 
 # ==========================================
-# 4. 날짜 및 스케줄 계산 로직
+# 4. 날짜 및 스케줄 계산 로직 (스마트 괄호 처리 추가)
 # ==========================================
 def is_holiday(date_obj):
     return date_obj in kr_holidays
@@ -321,11 +321,24 @@ def is_holiday(date_obj):
 def is_holiday_or_weekend(date_obj):
     return date_obj.weekday() >= 5 or date_obj in kr_holidays
 
+# [핵심 수정] 괄호 처리 로직 개선
 def clean_driver_name(name):
     if pd.isna(name): return "" 
     s = str(name).strip()
     if s.lower() == "nan" or s == "": return ""
-    s = re.sub(r'\(.*?\)', '', s) 
+    
+    # 1. 전각 괄호를 반각으로 통일
+    s = s.replace("（", "(").replace("）", ")")
+    
+    # 2. 문자열 전체가 괄호로 감싸져 있다면 괄호만 벗겨냄 (예: "(홍길동)" -> "홍길동")
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1]
+        
+    # 3. 괄호와 그 안의 내용 제거 (예: "홍길동(대타)" -> "홍길동")
+    # (주의: 2번에서 괄호를 벗긴 후에도 괄호가 남아있거나, 부분적으로 괄호가 있는 경우 처리)
+    s = re.sub(r'\(.*?\)', '', s)
+    
+    # 4. 공백 제거
     s = s.replace(" ", "").strip()
     return s
 
@@ -435,7 +448,7 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 6. 엑셀 파싱 (차량번호 필수 + 운전자 필수)
+# 6. 엑셀 파싱 (병합 셀 & 마지막 줄 완벽 대응)
 # ==========================================
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
@@ -476,17 +489,17 @@ def parse_roster_excel(file):
             
             for curr_idx in range(start_row + 3, end_row):
                 try:
-                    # 노선 (병합 처리)
+                    # 1. 노선 (병합 처리)
                     raw_route = df_raw.iloc[curr_idx, side['route']]
                     if pd.notnull(raw_route) and str(raw_route).strip() != "":
                         last_route = str(raw_route).strip()
                     current_route = last_route if last_route else ""
 
-                    # 순번
+                    # 2. 순번
                     raw_seq = df_raw.iloc[curr_idx, side['seq']]
                     current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                     
-                    # 차량번호
+                    # 3. 차량번호 (검사 대폭 완화)
                     raw_car = df_raw.iloc[curr_idx, side['car']]
                     current_car = ""
                     try:
@@ -498,7 +511,7 @@ def parse_roster_excel(file):
                             current_car = raw_car_str
                     except: pass
 
-                    # 운전자
+                    # 4. 운전자 확인 (가장 중요: 이름이 있으면 무조건 읽는다)
                     am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                     am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
                     am_final = am_sub if am_sub else am_fix
@@ -507,9 +520,8 @@ def parse_roster_excel(file):
                     pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                     pm_final = pm_sub if pm_sub else pm_fix
                     
-                    # [최종 필터] 차량번호도 있어야 하고, 운전자도 있어야 함
-                    # 차량번호가 없는 줄(빈 줄, 헤더 등)은 건너뜀
-                    if not current_car or not (am_final or pm_final):
+                    # [핵심] 운전자 이름이 하나라도 있으면, 다른 정보가 비어있어도 저장!
+                    if not (am_final or pm_final):
                         continue
                         
                     if am_final: 
