@@ -32,7 +32,7 @@ def show_input_dialog():
                     
                     st.toast("✅ 저장 완료!", icon="🔄")
                     utils.add_log(f"입력 성공: {len(lst)}명", ids=ids, sheet_name="schedules")
-                    # [수정] 대기 시간(time.sleep) 제거 -> 즉시 닫힘
+                    # 대기 시간 제거 (즉시 닫힘)
                     st.rerun()
                 except Exception as e:
                     st.error(f"🚨 저장 중 오류 발생: {e}")
@@ -55,7 +55,7 @@ def show_input_dialog():
                         
                     st.toast("✅ 행사 저장 완료!", icon="🔄")
                     utils.add_log(f"행사 등록: {et}", sheet_name="company_events")
-                    # [수정] 대기 시간 제거 -> 즉시 닫힘
+                    # 대기 시간 제거 (즉시 닫힘)
                     st.rerun()
                 except Exception:
                     st.error("오류 발생")
@@ -105,8 +105,10 @@ def render_input_tab():
                 
     # --- 3. 배차일지 업로드 ---
     with t3:
-        st.info("💡 여러 개의 엑셀 파일을 한 번에 업로드하면 근무 이력을 자동 분석하여 DB에 저장합니다.")
-        up_files = st.file_uploader("배차일지 엑셀 파일 (.xlsx)", type=['xlsx'], accept_multiple_files=True)
+        st.info("💡 엑셀 파일(.xlsx, .xlsm)을 업로드하면 근무 이력을 자동 분석하여 DB에 저장합니다.")
+        
+        # [수정] type=['xlsx', 'xlsm'] 추가하여 매크로 파일 허용
+        up_files = st.file_uploader("배차일지 엑셀 파일", type=['xlsx', 'xlsm'], accept_multiple_files=True)
         
         if up_files:
             if st.button("분석 및 DB 저장 실행", type="primary"):
@@ -114,7 +116,7 @@ def render_input_tab():
                     try:
                         all_dfs = []
                         for up_file in up_files:
-                            # utils의 함수 사용
+                            # utils의 함수 사용 (xlsm도 내부 엔진이 알아서 처리함)
                             df_res = utils.parse_roster_excel(up_file)
                             all_dfs.append(df_res)
                         
