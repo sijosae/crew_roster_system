@@ -201,7 +201,7 @@ def _render_yearly_stats_logic():
     else: st.info("데이터가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 근무자 현황 (최종 수정: 우선순위 적용)
+# 4. [탭3] 월간 차량별 근무자 현황 (우선순위 최종 수정)
 # ==========================================
 def _highlight_gamcha_cells(val):
     if val == "감차":
@@ -232,7 +232,6 @@ def _render_vehicle_stats_logic():
     
     st.divider()
 
-    # 데이터 처리
     year = st.session_state.veh_year
     month = st.session_state.veh_month
     filter_ym = f"{year}-{month:02d}"
@@ -258,20 +257,20 @@ def _render_vehicle_stats_logic():
     
     sorted_cars = sorted(valid_cars, key=try_int)
     
-    # [핵심] 중복 데이터 발생 시 '이름 있는 데이터'를 우선시하기 위한 로직
+    # DB 데이터 매핑
     schedule_map = {}
     for _, row in df_month.iterrows():
         try:
             d = int(pd.to_datetime(row['date']).day)
             c = str(row['car']).strip()
-            s = str(row['shift']).strip() # 오전, 오후
+            s = str(row['shift']).strip() 
             n = str(row['name']).strip()
             r_num = str(row.get('route', '')).strip()
             r_seq = str(row.get('seq', '')).strip()
             
             key = (d, c, s)
             
-            # 이미 데이터가 있는데, 현재 데이터는 이름이 없다면? -> 덮어쓰지 말고 기존(이름있는거) 유지
+            # 이름 있는 데이터를 우선 저장
             if key in schedule_map and schedule_map[key]['name'] != "" and n == "":
                 continue
                 
@@ -292,27 +291,27 @@ def _render_vehicle_stats_logic():
         for d in range(1, last_day + 1):
             date_str = f"{year}-{month:02d}-{d:02d}"
             
-            # --- [오전] ---
+            # --- [오전 처리] ---
             data_am = schedule_map.get((d, car, '오전'))
             val_am = ""
             if data_am:
-                # [수정] 1순위: 이름이 있으면 무조건 이름 표시 (5024호 해결)
-                if data_am['name']:
-                    val_am = data_am['name']
-                # [수정] 2순위: 이름 없는데 감차 규칙 맞으면 '감차' (5036호 해결)
-                elif utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
+                # [수정된 로직 1] 감차 규칙이면 무조건 '감차' (이름 있어도 무시)
+                if utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
                     val_am = "감차"
+                # [수정된 로직 2] 감차 아닌데 이름 있으면 이름 표시
+                elif data_am['name']:
+                    val_am = data_am['name']
                 else:
-                    val_am = "" # 이름도 없고 감차도 아니면 공란
+                    val_am = ""
             
-            # --- [오후] ---
+            # --- [오후 처리] ---
             data_pm = schedule_map.get((d, car, '오후'))
             val_pm = ""
             if data_pm:
-                if data_pm['name']:
-                    val_pm = data_pm['name']
-                elif utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
+                if utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
                     val_pm = "감차"
+                elif data_pm['name']:
+                    val_pm = data_pm['name']
                 else:
                     val_pm = ""
             
