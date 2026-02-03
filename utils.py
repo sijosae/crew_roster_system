@@ -10,7 +10,9 @@ import time
 import holidays
 import re
 
-# ... (상단 설정 코드는 동일) ...
+# ==========================================
+# 1. 전역 상수 및 공통 설정
+# ==========================================
 WEEKDAY_KOREAN = ["월", "화", "수", "목", "금", "토", "일"]
 SORT_ORDER = {"휴무": 1, "교육": 2, "경조사": 3, "징계": 4, "당일 해지": 5, "기타": 6, "휴직": 7, "병가": 8}
 kr_holidays = holidays.KR()
@@ -61,7 +63,9 @@ def inject_custom_css():
     </style>
     """, unsafe_allow_html=True)
 
-# ... (DB 연결 함수들: get_cached_sheet_object, get_db_connection, load_data, clear_cache_after_save - 기존 유지) ...
+# ==========================================
+# 2. DB 연결 및 데이터 로드
+# ==========================================
 @st.cache_resource
 def get_cached_sheet_object():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -106,12 +110,15 @@ def load_data(sheet_name):
 def clear_cache_after_save():
     st.cache_data.clear()
 
-# ... (저장 관련 함수들: save_range_batch, add_company_event, add_log, delete_rows_by_ids, save_work_history, add_driver_with_group, set_driver_resignation, delete_driver, add_user_account, delete_user_account, update_user_password, add_reduction_rule - 기존 유지) ...
+# ==========================================
+# 3. 데이터 저장 (절대 좌표 강제)
+# ==========================================
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
     base_id = now_kst.strftime("%y%m%d%H%M")
+    
     rows_to_add = []
     generated_ids = []
     count = 0
@@ -122,13 +129,16 @@ def save_range_batch(name_list, start, end, type, shift, note):
             generated_ids.append(row_id)
             rows_to_add.append([str(row_id), str(name), str(d_str), str(type), str(note), str(created_at), str(shift)])
             count += 1
+            
     if rows_to_add:
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
         existing_data = ws.get_all_values()
         next_row = len(existing_data) + 1
-        try: ws.update(values=rows_to_add, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
-        except TypeError: ws.update(f"A{next_row}", rows_to_add, value_input_option='USER_ENTERED')
+        try:
+            ws.update(values=rows_to_add, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
+        except TypeError:
+            ws.update(f"A{next_row}", rows_to_add, value_input_option='USER_ENTERED')
         clear_cache_after_save()
     return len(rows_to_add), generated_ids
 
@@ -141,15 +151,25 @@ def add_company_event(date, title):
     existing_data = ws.get_all_values()
     next_row = len(existing_data) + 1
     data = [[str(row_id), str(date), str(title), str(created_at)]]
-    try: ws.update(values=data, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
-    except TypeError: ws.update(f"A{next_row}", data, value_input_option='USER_ENTERED')
+    try:
+        ws.update(values=data, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
+    except TypeError:
+        ws.update(f"A{next_row}", data, value_input_option='USER_ENTERED')
     clear_cache_after_save()
     return row_id
 
 def add_log(msg, ids=None, sheet_name=None, level="INFO"):
     timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    log_entry = {"time": timestamp, "msg": msg, "level": level, "ids": ids if ids else [], "sheet": sheet_name, "status": "active"}
-    if 'action_logs' not in st.session_state: st.session_state['action_logs'] = []
+    log_entry = {
+        "time": timestamp,
+        "msg": msg,
+        "level": level,
+        "ids": ids if ids else [],
+        "sheet": sheet_name,
+        "status": "active"
+    }
+    if 'action_logs' not in st.session_state:
+        st.session_state['action_logs'] = []
     st.session_state['action_logs'].insert(0, log_entry)
 
 def delete_rows_by_ids(sheet_name, id_list):
@@ -159,25 +179,32 @@ def delete_rows_by_ids(sheet_name, id_list):
     col_values = ws.col_values(1) 
     rows_to_delete = []
     for target_id in id_list:
-        try: row_idx = col_values.index(target_id) + 1; rows_to_delete.append(row_idx)
+        try:
+            row_idx = col_values.index(target_id) + 1
+            rows_to_delete.append(row_idx)
         except ValueError: continue
     rows_to_delete.sort(reverse=True)
-    for r_idx in rows_to_delete: ws.delete_rows(r_idx)
+    for r_idx in rows_to_delete:
+        ws.delete_rows(r_idx)
     clear_cache_after_save()
     return True
 
 def save_work_history(df_new):
     sh = get_db_connection()
-    try: ws = sh.worksheet("work_history")
+    try:
+        ws = sh.worksheet("work_history")
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="work_history", rows=1000, cols=10)
         ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
+
     existing_data = ws.get_all_values()
     df_old = pd.DataFrame()
     if len(existing_data) > 1:
         headers = existing_data.pop(0)
         df_old = pd.DataFrame(existing_data, columns=headers)
-    if df_old.empty: df_final = df_new
+    
+    if df_old.empty:
+        df_final = df_new
     else:
         required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']
         for c in required_cols:
@@ -187,13 +214,17 @@ def save_work_history(df_new):
         df_old = df_old[required_cols]
         df_combined = pd.concat([df_old, df_new])
         df_final = df_combined.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
+        
     df_final = df_final.sort_values(by=['date', 'name'])
     ws.clear()
+    
     header = [['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']]
     data_to_write = df_final.fillna("").astype(str).values.tolist()
     all_values = header + data_to_write
-    try: ws.update(values=all_values, range_name="A1", value_input_option='USER_ENTERED')
-    except TypeError: ws.update("A1", all_values, value_input_option='USER_ENTERED')
+    try:
+        ws.update(values=all_values, range_name="A1", value_input_option='USER_ENTERED')
+    except TypeError:
+        ws.update("A1", all_values, value_input_option='USER_ENTERED')
     clear_cache_after_save()
     return len(df_new)
 
@@ -203,7 +234,8 @@ def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     created_at = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         existing = ws_drivers.find(name)
-        if not existing: ws_drivers.append_row(["", name, group_name, created_at, ""])
+        if not existing:
+            ws_drivers.append_row(["", name, group_name, created_at, ""])
     except: pass
     ws_history = sh.worksheet("group_history")
     ws_history.append_row(["", name, group_name, start_date, created_at])
@@ -215,23 +247,28 @@ def set_driver_resignation(name, r_date):
     ws = sh.worksheet("drivers")
     try:
         cell = ws.find(name)
-        if cell: ws.update_cell(cell.row, 5, r_date); clear_cache_after_save()
+        if cell:
+            ws.update_cell(cell.row, 5, r_date)
+            clear_cache_after_save()
     except: pass
 
 def delete_driver(driver_name):
     sh = get_db_connection()
     ws_d = sh.worksheet("drivers")
-    try: cell = ws_d.find(driver_name); 
-    except: cell=None
-    if cell: ws_d.delete_rows(cell.row)
+    try:
+        cell = ws_d.find(driver_name)
+        if cell: ws_d.delete_rows(cell.row)
+    except: pass
     ws_h = sh.worksheet("group_history")
-    try: cells = ws_h.findall(driver_name); 
-    except: cells=[]
-    for cell in reversed(cells): ws_h.delete_rows(cell.row)
+    try:
+        cells = ws_h.findall(driver_name)
+        for cell in reversed(cells): ws_h.delete_rows(cell.row)
+    except: pass
     ws_s = sh.worksheet("schedules")
-    try: cells = ws_s.findall(driver_name); 
-    except: cells=[]
-    for cell in reversed(cells): ws_s.delete_rows(cell.row)
+    try:
+        cells = ws_s.findall(driver_name)
+        for cell in reversed(cells): ws_s.delete_rows(cell.row)
+    except: pass
     clear_cache_after_save()
 
 def add_user_account(username, password, role, name):
@@ -246,21 +283,29 @@ def add_user_account(username, password, role, name):
 def delete_user_account(username):
     sh = get_db_connection()
     ws = sh.worksheet("users")
-    try: cell = ws.find(username); 
-    except: cell=None
-    if cell: ws.delete_rows(cell.row); clear_cache_after_save()
+    try:
+        cell = ws.find(username)
+        if cell:
+            ws.delete_rows(cell.row)
+            clear_cache_after_save()
+    except: pass
 
 def update_user_password(username, new_password):
     sh = get_db_connection()
     ws = sh.worksheet("users")
-    try: cell = ws.find(username); 
-    except: cell=None
-    if cell: ws.update_cell(cell.row, 2, make_hash(new_password)); clear_cache_after_save(); return True
+    try:
+        cell = ws.find(username)
+        if cell:
+            ws.update_cell(cell.row, 2, make_hash(new_password))
+            clear_cache_after_save()
+            return True
+    except: pass
     return False
     
 def add_reduction_rule(start, end, route, seq, cond):
     sh = get_db_connection()
-    try: ws = sh.worksheet("reduction_rules")
+    try:
+        ws = sh.worksheet("reduction_rules")
     except:
         ws = sh.add_worksheet(title="reduction_rules", rows=100, cols=5)
         ws.append_row(['start_date', 'end_date', 'route', 'sequence', 'condition'])
@@ -345,26 +390,32 @@ def get_reduction_rules():
 def normalize_key(val):
     if pd.isna(val) or val == "": return ""
     s = str(val).strip()
-    try: return str(int(float(s)))
-    except: return s
+    try:
+        return str(int(float(s)))
+    except:
+        return s
 
 def is_reduction_target(date_str, route, seq, rules):
-    try: d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
     except: return False
     is_holi = is_holiday_or_weekend(d)
+    
     tgt_route = normalize_key(route)
     tgt_seq = normalize_key(seq)
+    
     for r in rules:
         if r['start'] <= date_str <= r['end']:
             rule_route = normalize_key(r['route'])
             rule_seq = normalize_key(r['seq'])
+            
             if rule_route == tgt_route and rule_seq == tgt_seq:
                 if r['condition'] == 'Always': return True
                 if r['condition'] == 'Weekend/Holiday' and is_holi: return True
     return False
 
 # ==========================================
-# 5. 로그인 및 사용자 관리 (기존 유지)
+# 5. 로그인 및 사용자 관리
 # ==========================================
 def login_user(username, password):
     df = load_data("users")
@@ -373,13 +424,15 @@ def login_user(username, password):
     if 'username' not in df.columns: return None
     df['username'] = df['username'].astype(str)
     user = df[(df['username'] == username) & (df['password'] == pw_hash)]
-    if not user.empty: return user.iloc[0]['role'], user.iloc[0]['name']
+    if not user.empty:
+        return user.iloc[0]['role'], user.iloc[0]['name']
     return None
 
 def log_login_access(username, name):
     try:
         sh = get_db_connection()
-        try: ws = sh.worksheet("access_logs")
+        try:
+            ws = sh.worksheet("access_logs")
         except gspread.exceptions.WorksheetNotFound:
             ws = sh.add_worksheet(title="access_logs", rows=1000, cols=4)
             ws.append_row(["timestamp", "username", "name", "status"])
@@ -389,13 +442,16 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 6. 엑셀 파싱 (핵심 수정: 필터 완화)
+# 6. 엑셀 파싱 (범위확장 + 병합대응 + 필터링)
 # ==========================================
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
+    
+    # 1. 날짜 구분행 찾기
     date_rows = []
     for idx, row in df_raw.iterrows():
         val = str(row[0])
+        # "202x년" 또는 "x월 x일" 패턴을 찾음
         if ("202" in val or "년" in val):
             try:
                 if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
@@ -404,10 +460,15 @@ def parse_roster_excel(file):
             
     extracted_data = []
     
+    # 2. 날짜별 구간 파싱 (동적 구간 적용)
     for i in range(len(date_rows)):
         start_row = date_rows[i]
-        if i + 1 < len(date_rows): end_row = date_rows[i+1]
-        else: end_row = len(df_raw)
+        
+        # 다음 날짜 행이 있으면 거기가 끝, 없으면 파일 끝이 끝
+        if i + 1 < len(date_rows):
+            end_row = date_rows[i+1]
+        else:
+            end_row = len(df_raw)
             
         try:
             year = int(str(df_raw.iloc[start_row, 0]).replace("년","").strip())
@@ -422,29 +483,34 @@ def parse_roster_excel(file):
         ]
         
         for side in cols_map:
+            # [핵심] 병합된 정보를 기억하기 위한 변수 초기화
             last_route = None
-            last_car = None
+            last_car = None 
             
+            # 헤더(3줄) 건너뛰고 해당 날짜 구간 읽기
             for curr_idx in range(start_row + 3, end_row):
                 try:
+                    # 1. 노선
                     raw_route = df_raw.iloc[curr_idx, side['route']]
                     if pd.notnull(raw_route) and str(raw_route).strip() != "":
                         last_route = str(raw_route).strip()
                     current_route = last_route if last_route else ""
 
+                    # 2. 순번
                     raw_seq = df_raw.iloc[curr_idx, side['seq']]
                     current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                     
+                    # 3. 차량번호 (병합 처리 및 쓰레기 제거)
                     raw_car = df_raw.iloc[curr_idx, side['car']]
                     current_car = ""
                     
                     if pd.notnull(raw_car):
                         raw_car_str = str(raw_car).strip()
-                        # [필터] 차량번호 칸에는 확실한 통계 키워드만 거름 (명/대/원 삭제)
+                        # [필터 1] "명", "대", "계", "합계" 등이 포함되면 해당 줄은 쓰레기로 간주하고 SKIP
                         trash_keywords = ['계', '합계', '총', '인원', '전일', '금일', '사고', '잔류', '휴차', '정비']
-                        if any(k in raw_car_str for k in trash_keywords):
+                        if raw_car_str in ['명', '대'] or any(k in raw_car_str for k in trash_keywords):
                             current_car = "" 
-                            last_car = None 
+                            # 이 줄은 데이터가 아니므로 아래 운전자 읽기 단계에서 걸러지도록 유도
                         else:
                             digits = re.sub(r'[^0-9]', '', raw_car_str)
                             if digits and int(digits) > 100: 
@@ -452,12 +518,17 @@ def parse_roster_excel(file):
                             elif raw_car_str: 
                                 current_car = raw_car_str
                     
-                    if not current_car and last_car: current_car = last_car
-                    if current_car: last_car = current_car
-                    else: last_car = None
+                    # [핵심] 차량번호가 비어있는데, 방금 전 윗줄에 차량번호가 있었다면? -> 병합으로 간주하고 채움 (5024호 해결)
+                    # 단, 위에서 "쓰레기"로 판명나서 비운 거면 채우지 않음 (last_car도 초기화해야 함)
+                    if not current_car and last_car:
+                        current_car = last_car
+                    
+                    if current_car:
+                        last_car = current_car
+                    else:
+                        last_car = None # 끊기면 기억 소거
 
-                    if not (current_route and current_car): continue
-
+                    # 4. 운전자 (강력 필터링)
                     am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                     am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
                     am_final = am_sub if am_sub else am_fix
@@ -466,25 +537,22 @@ def parse_roster_excel(file):
                     pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                     pm_final = pm_sub if pm_sub else pm_fix
                     
-                    # [핵심 수정] 이름 필터 대폭 완화 (명, 대, 원 삭제 -> '합계', '총' 등 확실한 것만 삭제)
-                    # 이름에 숫자가 섞인 경우는 숫자만 제거 (5044호 등)
-                    
+                    # [필터 2] 이름에 '합계', '총' 같은 통계 단어만 삭제 (명, 대, 원은 허용!)
+                    # 이름에 숫자가 섞여 있으면 제거 (예: 홍길동5044 -> 홍길동)
                     trash_name_keywords = ["합계", "총", "계", "인원", "잔류", "투입"]
                     
                     if am_final:
-                        # 통계 키워드가 있거나, 숫자가 3자리 이상 포함되면(차량번호일 확률 높음) 의심
-                        if any(k in am_final for k in trash_name_keywords): 
-                            am_final = ""
-                        else:
-                            # 이름 뒤에 붙은 숫자 제거 (예: 홍길동5044 -> 홍길동)
-                            am_final = re.sub(r'[0-9]+', '', am_final).strip()
+                        if any(k in am_final for k in trash_name_keywords): am_final = ""
+                        else: am_final = re.sub(r'[0-9]+', '', am_final).strip()
 
                     if pm_final:
-                        if any(k in pm_final for k in trash_name_keywords): 
-                            pm_final = ""
-                        else:
-                            pm_final = re.sub(r'[0-9]+', '', pm_final).strip()
+                        if any(k in pm_final for k in trash_name_keywords): pm_final = ""
+                        else: pm_final = re.sub(r'[0-9]+', '', pm_final).strip()
 
+                    # [최종 저장 조건] 유효한 이름이 하나라도 있거나, 차량번호+노선이 있으면 저장
+                    if not (am_final or pm_final or (current_car and current_route)):
+                        continue
+                        
                     extracted_data.append({
                         'date': current_date, 'name': am_final, 'shift': '오전', 
                         'route': current_route, 'seq': current_seq, 'car': current_car, 
@@ -496,26 +564,37 @@ def parse_roster_excel(file):
                         'route': current_route, 'seq': current_seq, 'car': current_car, 
                         'is_sub': bool(pm_sub), 'orig_fix': pm_fix
                     })
-                except Exception: continue
+                except Exception:
+                    continue
 
     return pd.DataFrame(extracted_data)
 
-# ... (get_admin_memo, save_admin_memo 기존 유지) ...
+# ==========================================
+# 7. 관리자 메모장
+# ==========================================
 def get_admin_memo():
     sh = get_db_connection()
-    try: ws = sh.worksheet("admin_memo")
+    try:
+        ws = sh.worksheet("admin_memo")
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
-        try: ws.update(values=[[""]], range_name="A1", value_input_option='USER_ENTERED')
-        except: ws.update("A1", [[""]], value_input_option='USER_ENTERED')
+        try:
+            ws.update(values=[[""]], range_name="A1", value_input_option='USER_ENTERED')
+        except:
+            ws.update("A1", [[""]], value_input_option='USER_ENTERED')
+    
     val = ws.acell('A1').value
     return val if val else ""
 
 def save_admin_memo(text):
     sh = get_db_connection()
-    try: ws = sh.worksheet("admin_memo")
+    try:
+        ws = sh.worksheet("admin_memo")
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
-    try: ws.update(values=[[text]], range_name="A1", value_input_option='USER_ENTERED')
-    except: ws.update("A1", [[text]], value_input_option='USER_ENTERED')
+    
+    try:
+        ws.update(values=[[text]], range_name="A1", value_input_option='USER_ENTERED')
+    except:
+        ws.update("A1", [[text]], value_input_option='USER_ENTERED')
     clear_cache_after_save()
