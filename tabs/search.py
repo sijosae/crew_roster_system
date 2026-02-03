@@ -9,19 +9,18 @@ import utils
 # ==========================================
 def _init_search_session_state():
     now = utils.get_kst_now()
-    # 공통 상태 변수 (연간 통계 탭용)
     if 'search_stat_year' not in st.session_state:
         st.session_state.search_stat_year = now.year
     if 'search_stat_month' not in st.session_state:
         st.session_state.search_stat_month = now.month
-        
-    # [수정] 차량 통계 탭용 별도 변수 (독립 운용)
+    
+    # 차량 현황 탭용 별도 State
     if 'veh_year' not in st.session_state:
         st.session_state.veh_year = now.year
     if 'veh_month' not in st.session_state:
         st.session_state.veh_month = now.month
 
-# --- 탭2(연간통계) 콜백 ---
+# --- [탭2] 연간 통계용 화살표 콜백 ---
 def _prev_month_search():
     if st.session_state.search_stat_month == 1:
         st.session_state.search_stat_year -= 1
@@ -38,14 +37,14 @@ def _next_month_search():
         st.session_state.search_stat_month += 1
     st.session_state.sb_search_year = st.session_state.search_stat_year
 
-# --- 탭3(차량통계) 콜백 ---
+# --- [탭3] 차량별 현황용 화살표 콜백 ---
 def _prev_month_veh():
     if st.session_state.veh_month == 1:
         st.session_state.veh_year -= 1
         st.session_state.veh_month = 12
     else:
         st.session_state.veh_month -= 1
-        
+
 def _next_month_veh():
     if st.session_state.veh_month == 12:
         st.session_state.veh_year += 1
@@ -64,7 +63,7 @@ def _get_history_dict():
     return h_dict
 
 # ==========================================
-# 2. [탭1] 상세 이력 조회 (기존 유지)
+# 2. [탭1] 상세 이력 조회
 # ==========================================
 def _render_detail_search(is_admin=False):
     df = utils.load_data("schedules")
@@ -205,7 +204,7 @@ def _render_yearly_stats_logic():
     else: st.info("데이터가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 근무자 현황 (수정됨)
+# 4. [탭3] 월간 차량별 근무자 현황 (로직 수정)
 # ==========================================
 def _highlight_gamcha_cells(val):
     if val == "감차":
@@ -219,7 +218,6 @@ def _render_vehicle_stats_logic():
     c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
     now = utils.get_kst_now()
     
-    # [수정] Session State key를 직접 바인딩하여 동기화 문제 해결
     with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c_yr: 
         year_range = range(2023, now.year + 3)
@@ -286,16 +284,22 @@ def _render_vehicle_stats_logic():
         for d in range(1, last_day + 1):
             date_str = f"{year}-{month:02d}-{d:02d}"
             
+            # --- [오전 데이터 처리] ---
             data_am = schedule_map.get((d, car, '오전'))
             val_am = ""
+            
             if data_am:
+                # 1. 감차 규칙 확인 (5036호는 여기서 걸림 -> 이름 없어도 "감차"로 표시됨)
                 if utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
                     val_am = "감차"
+                # 2. 감차가 아니면 이름 표시 (5024호는 여기서 이름이 나옴)
                 else:
                     val_am = data_am['name']
             
+            # --- [오후 데이터 처리] ---
             data_pm = schedule_map.get((d, car, '오후'))
             val_pm = ""
+            
             if data_pm:
                 if utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
                     val_pm = "감차"
