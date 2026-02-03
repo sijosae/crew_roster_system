@@ -4,16 +4,13 @@ import io
 import calendar
 import utils
 
-# ==========================================
-# 1. 내부 헬퍼 함수
-# ==========================================
+# ... (기존 헬퍼 함수들은 그대로 유지) ...
 def _init_search_session_state():
     now = utils.get_kst_now()
     if 'search_stat_year' not in st.session_state:
         st.session_state.search_stat_year = now.year
     if 'search_stat_month' not in st.session_state:
         st.session_state.search_stat_month = now.month
-    
     if 'veh_year' not in st.session_state:
         st.session_state.veh_year = now.year
     if 'veh_month' not in st.session_state:
@@ -59,9 +56,6 @@ def _get_history_dict():
         for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
     return h_dict
 
-# ==========================================
-# 2. [탭1] 상세 이력 조회
-# ==========================================
 def _render_detail_search(is_admin=False):
     df = utils.load_data("schedules")
     if df.empty:
@@ -112,9 +106,6 @@ def _render_detail_search(is_admin=False):
     else:
         st.info("검색 결과가 없습니다.")
 
-# ==========================================
-# 3. [탭2] 연간 근무 집계
-# ==========================================
 def _highlight_consecutive_months(data):
     bg_styles = pd.DataFrame('', index=data.index, columns=data.columns)
     month_cols = [f"{i}월" for i in range(1, 13)]
@@ -201,7 +192,7 @@ def _render_yearly_stats_logic():
     else: st.info("데이터가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 근무자 현황 (우선순위 최종 수정)
+# 4. [탭3] 월간 차량별 근무자 현황 (최종 수정: 감차 우선 적용)
 # ==========================================
 def _highlight_gamcha_cells(val):
     if val == "감차":
@@ -211,7 +202,6 @@ def _highlight_gamcha_cells(val):
 def _render_vehicle_stats_logic():
     _init_search_session_state()
     
-    # UI Layout
     c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
     now = utils.get_kst_now()
     
@@ -257,7 +247,6 @@ def _render_vehicle_stats_logic():
     
     sorted_cars = sorted(valid_cars, key=try_int)
     
-    # DB 데이터 매핑
     schedule_map = {}
     for _, row in df_month.iterrows():
         try:
@@ -270,7 +259,7 @@ def _render_vehicle_stats_logic():
             
             key = (d, c, s)
             
-            # 이름 있는 데이터를 우선 저장
+            # [중요] 중복 데이터 처리: 이름 있는 데이터를 우선 저장
             if key in schedule_map and schedule_map[key]['name'] != "" and n == "":
                 continue
                 
@@ -291,20 +280,20 @@ def _render_vehicle_stats_logic():
         for d in range(1, last_day + 1):
             date_str = f"{year}-{month:02d}-{d:02d}"
             
-            # --- [오전 처리] ---
+            # --- [오전] ---
             data_am = schedule_map.get((d, car, '오전'))
             val_am = ""
             if data_am:
-                # [수정된 로직 1] 감차 규칙이면 무조건 '감차' (이름 있어도 무시)
+                # [순서 1] 감차 규칙이면 -> 무조건 "감차" (이름 있어도 무시)
                 if utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
                     val_am = "감차"
-                # [수정된 로직 2] 감차 아닌데 이름 있으면 이름 표시
+                # [순서 2] 감차 아니고 이름 있으면 -> 이름
                 elif data_am['name']:
                     val_am = data_am['name']
                 else:
                     val_am = ""
             
-            # --- [오후 처리] ---
+            # --- [오후] ---
             data_pm = schedule_map.get((d, car, '오후'))
             val_pm = ""
             if data_pm:
