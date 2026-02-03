@@ -14,13 +14,11 @@ def _init_search_session_state():
     if 'search_stat_month' not in st.session_state:
         st.session_state.search_stat_month = now.month
     
-    # 차량 현황 탭용 별도 State
     if 'veh_year' not in st.session_state:
         st.session_state.veh_year = now.year
     if 'veh_month' not in st.session_state:
         st.session_state.veh_month = now.month
 
-# --- [탭2] 연간 통계용 화살표 콜백 ---
 def _prev_month_search():
     if st.session_state.search_stat_month == 1:
         st.session_state.search_stat_year -= 1
@@ -37,7 +35,6 @@ def _next_month_search():
         st.session_state.search_stat_month += 1
     st.session_state.sb_search_year = st.session_state.search_stat_year
 
-# --- [탭3] 차량별 현황용 화살표 콜백 ---
 def _prev_month_veh():
     if st.session_state.veh_month == 1:
         st.session_state.veh_year -= 1
@@ -204,7 +201,7 @@ def _render_yearly_stats_logic():
     else: st.info("데이터가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 근무자 현황 (로직 수정)
+# 4. [탭3] 월간 차량별 근무자 현황 (최종 수정: 우선순위 적용)
 # ==========================================
 def _highlight_gamcha_cells(val):
     if val == "감차":
@@ -261,6 +258,7 @@ def _render_vehicle_stats_logic():
     
     sorted_cars = sorted(valid_cars, key=try_int)
     
+    # [핵심] 중복 데이터 발생 시 '이름 있는 데이터'를 우선시하기 위한 로직
     schedule_map = {}
     for _, row in df_month.iterrows():
         try:
@@ -271,7 +269,17 @@ def _render_vehicle_stats_logic():
             r_num = str(row.get('route', '')).strip()
             r_seq = str(row.get('seq', '')).strip()
             
-            schedule_map[(d, c, s)] = {'name': n, 'route': r_num, 'seq': r_seq}
+            key = (d, c, s)
+            
+            # 이미 데이터가 있는데, 현재 데이터는 이름이 없다면? -> 덮어쓰지 말고 기존(이름있는거) 유지
+            if key in schedule_map and schedule_map[key]['name'] != "" and n == "":
+                continue
+                
+            schedule_map[key] = {
+                'name': n,
+                'route': r_num,
+                'seq': r_seq
+            }
         except: continue
             
     _, last_day = calendar.monthrange(year, month)
@@ -284,27 +292,29 @@ def _render_vehicle_stats_logic():
         for d in range(1, last_day + 1):
             date_str = f"{year}-{month:02d}-{d:02d}"
             
-            # --- [오전 데이터 처리] ---
+            # --- [오전] ---
             data_am = schedule_map.get((d, car, '오전'))
             val_am = ""
-            
             if data_am:
-                # 1. 감차 규칙 확인 (5036호는 여기서 걸림 -> 이름 없어도 "감차"로 표시됨)
-                if utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
-                    val_am = "감차"
-                # 2. 감차가 아니면 이름 표시 (5024호는 여기서 이름이 나옴)
-                else:
+                # [수정] 1순위: 이름이 있으면 무조건 이름 표시 (5024호 해결)
+                if data_am['name']:
                     val_am = data_am['name']
+                # [수정] 2순위: 이름 없는데 감차 규칙 맞으면 '감차' (5036호 해결)
+                elif utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
+                    val_am = "감차"
+                else:
+                    val_am = "" # 이름도 없고 감차도 아니면 공란
             
-            # --- [오후 데이터 처리] ---
+            # --- [오후] ---
             data_pm = schedule_map.get((d, car, '오후'))
             val_pm = ""
-            
             if data_pm:
-                if utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
+                if data_pm['name']:
+                    val_pm = data_pm['name']
+                elif utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
                     val_pm = "감차"
                 else:
-                    val_pm = data_pm['name']
+                    val_pm = ""
             
             row_am[f"{d}일"] = val_am
             row_pm[f"{d}일"] = val_pm
