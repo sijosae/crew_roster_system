@@ -4,13 +4,16 @@ import io
 import calendar
 import utils
 
-# ... (기존 헬퍼 함수들은 그대로 유지) ...
+# ==========================================
+# 1. 내부 헬퍼 함수
+# ==========================================
 def _init_search_session_state():
     now = utils.get_kst_now()
     if 'search_stat_year' not in st.session_state:
         st.session_state.search_stat_year = now.year
     if 'search_stat_month' not in st.session_state:
         st.session_state.search_stat_month = now.month
+    
     if 'veh_year' not in st.session_state:
         st.session_state.veh_year = now.year
     if 'veh_month' not in st.session_state:
@@ -56,6 +59,9 @@ def _get_history_dict():
         for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
     return h_dict
 
+# ==========================================
+# 2. [탭1] 상세 이력 조회
+# ==========================================
 def _render_detail_search(is_admin=False):
     df = utils.load_data("schedules")
     if df.empty:
@@ -106,6 +112,9 @@ def _render_detail_search(is_admin=False):
     else:
         st.info("검색 결과가 없습니다.")
 
+# ==========================================
+# 3. [탭2] 연간 근무 집계
+# ==========================================
 def _highlight_consecutive_months(data):
     bg_styles = pd.DataFrame('', index=data.index, columns=data.columns)
     month_cols = [f"{i}월" for i in range(1, 13)]
@@ -192,7 +201,7 @@ def _render_yearly_stats_logic():
     else: st.info("데이터가 없습니다.")
 
 # ==========================================
-# 4. [탭3] 월간 차량별 근무자 현황 (최종 수정: 감차 우선 적용)
+# 4. [탭3] 월간 차량별 근무자 현황 (우선순위 최종 확정)
 # ==========================================
 def _highlight_gamcha_cells(val):
     if val == "감차":
@@ -202,6 +211,7 @@ def _highlight_gamcha_cells(val):
 def _render_vehicle_stats_logic():
     _init_search_session_state()
     
+    # UI Layout
     c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
     now = utils.get_kst_now()
     
@@ -222,6 +232,7 @@ def _render_vehicle_stats_logic():
     
     st.divider()
 
+    # 데이터 처리
     year = st.session_state.veh_year
     month = st.session_state.veh_month
     filter_ym = f"{year}-{month:02d}"
@@ -247,6 +258,7 @@ def _render_vehicle_stats_logic():
     
     sorted_cars = sorted(valid_cars, key=try_int)
     
+    # DB 데이터 매핑
     schedule_map = {}
     for _, row in df_month.iterrows():
         try:
@@ -259,7 +271,7 @@ def _render_vehicle_stats_logic():
             
             key = (d, c, s)
             
-            # [중요] 중복 데이터 처리: 이름 있는 데이터를 우선 저장
+            # [중요] 중복 데이터 발생 시, 이름 있는 데이터를 우선 저장
             if key in schedule_map and schedule_map[key]['name'] != "" and n == "":
                 continue
                 
@@ -280,27 +292,30 @@ def _render_vehicle_stats_logic():
         for d in range(1, last_day + 1):
             date_str = f"{year}-{month:02d}-{d:02d}"
             
-            # --- [오전] ---
+            # --- [오전 데이터 처리] ---
             data_am = schedule_map.get((d, car, '오전'))
             val_am = ""
             if data_am:
-                # [순서 1] 감차 규칙이면 -> 무조건 "감차" (이름 있어도 무시)
-                if utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
-                    val_am = "감차"
-                # [순서 2] 감차 아니고 이름 있으면 -> 이름
-                elif data_am['name']:
+                # [순위 1] 이름이 있으면 무조건 이름 표시 (감차여부 무시)
+                if data_am['name']:
                     val_am = data_am['name']
+                # [순위 2] 이름은 없는데 감차 규칙에 해당하면 '감차' 표시
+                elif utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
+                    val_am = "감차"
+                # [순위 3] 둘 다 아니면 공란
                 else:
                     val_am = ""
             
-            # --- [오후] ---
+            # --- [오후 데이터 처리] ---
             data_pm = schedule_map.get((d, car, '오후'))
             val_pm = ""
             if data_pm:
-                if utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
-                    val_pm = "감차"
-                elif data_pm['name']:
+                # [순위 1] 이름 우선
+                if data_pm['name']:
                     val_pm = data_pm['name']
+                # [순위 2] 감차 규칙 확인
+                elif utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
+                    val_pm = "감차"
                 else:
                     val_pm = ""
             
