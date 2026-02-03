@@ -156,7 +156,6 @@ def _render_vehicle_stats_logic():
         except: return 999999
     sorted_cars = sorted(valid_cars, key=try_int)
     
-    # DB 매핑 (이름이 있는 데이터 우선)
     schedule_map = {}
     for _, row in df_month.iterrows():
         try:
@@ -167,6 +166,7 @@ def _render_vehicle_stats_logic():
             r_num = str(row.get('route', '')).strip()
             r_seq = str(row.get('seq', '')).strip()
             key = (d, c, s)
+            # 이름이 있는 데이터를 우선시 (중복시 빈칸 데이터는 무시)
             if key in schedule_map and schedule_map[key]['name'] != "" and n == "": continue
             schedule_map[key] = {'name': n, 'route': r_num, 'seq': r_seq}
         except: continue
@@ -183,18 +183,22 @@ def _render_vehicle_stats_logic():
             data_am = schedule_map.get((d, car, '오전'))
             val_am = ""
             if data_am:
-                # [순위 1] 이름 있으면 -> 이름 (5024호: 김서윤 표시)
-                if data_am['name']: val_am = data_am['name']
-                # [순위 2] 이름 없고 감차 규칙이면 -> 감차 (5036호: 감차 표시)
-                elif utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules): val_am = "감차"
+                # [규칙 1] 이 차량이 감차 대상이면? -> 무조건 "감차" (이름 덮어씌움)
+                if utils.is_reduction_target(date_str, data_am['route'], data_am['seq'], reduction_rules):
+                    val_am = "감차"
+                # [규칙 2] 감차 아닌데 이름 있으면? -> 이름
+                elif data_am['name']:
+                    val_am = data_am['name']
                 else: val_am = ""
             
             # --- [오후] ---
             data_pm = schedule_map.get((d, car, '오후'))
             val_pm = ""
             if data_pm:
-                if data_pm['name']: val_pm = data_pm['name']
-                elif utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules): val_pm = "감차"
+                if utils.is_reduction_target(date_str, data_pm['route'], data_pm['seq'], reduction_rules):
+                    val_pm = "감차"
+                elif data_pm['name']:
+                    val_pm = data_pm['name']
                 else: val_pm = ""
             
             row_am[f"{d}일"] = val_am; row_pm[f"{d}일"] = val_pm
