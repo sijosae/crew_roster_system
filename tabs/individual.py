@@ -3,11 +3,8 @@ import pandas as pd
 import calendar
 from datetime import datetime
 import io
-import utils  # 공통 도구함
+import utils
 
-# ==========================================
-# 1. 탭 내부 전용 콜백 함수
-# ==========================================
 def prev_month_indiv():
     if st.session_state.indiv_view_month == 1:
         st.session_state.indiv_view_year -= 1
@@ -26,9 +23,6 @@ def next_month_indiv():
     st.session_state.sb_ind_year = st.session_state.indiv_view_year
     st.session_state.sb_ind_month = st.session_state.indiv_view_month
 
-# ==========================================
-# 2. 통계 계산 함수
-# ==========================================
 def calculate_real_stats(df_work, reduction_rules, h_dict, target_name):
     cnt_am = 0
     cnt_pm = 0
@@ -36,51 +30,27 @@ def calculate_real_stats(df_work, reduction_rules, h_dict, target_name):
 
     for _, row in df_work.iterrows():
         shift = row['shift']
-        if shift not in ['오전', '오후']: continue
-        d_str = row['date']
-        
-        is_red = utils.is_reduction_target(d_str, row['route'], row['seq'], reduction_rules)
-        is_sub = (str(row['is_sub']).upper() in ['Y', 'TRUE'])
-        car_is_red = '감차' in str(row['car'])
-        
-        if (is_red or car_is_red) and not is_sub:
-            continue
-            
-        if shift == '오전': cnt_am += 1
-        elif shift == '오후': cnt_pm += 1
+        car = str(row['car']).strip()
+        # [수정] 차량번호가 '감차'라고 적힌 게 아니면 모두 근무로 인정
+        if shift == '오전' and car != '감차': cnt_am += 1
+        elif shift == '오후' and car != '감차': cnt_pm += 1
         
     return cnt_am, cnt_pm
 
-# ==========================================
-# 3. 메인 렌더링 함수
-# ==========================================
 def render_individual_calendar_tab():
     st.subheader("👤 승무원별 월간 근무 현황 (통합)")
     
-    # 모바일 세로 배치 유지
     st.markdown("""
     <style>
     @media (max-width: 640px) {
-        .cal-content-box {
-            font-size: 14px !important;
-            min-height: 80px !important;
-            padding: 5px !important;
-            line-height: 1.4 !important;
-        }
-        .cal-header {
-            font-size: 14px !important;
-            margin-bottom: 5px !important;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 2px;
-        }
-        .cal-badge {
-            font-size: 11px !important;
-        }
+        .cal-content-box { font-size: 14px !important; min-height: 85px !important; padding: 5px !important; line-height: 1.4 !important; }
+        .cal-header { font-size: 14px !important; margin-bottom: 5px !important; border-bottom: 1px solid #eee; padding-bottom: 2px; }
+        .cal-badge { font-size: 11px !important; }
+        .grp-badge { font-size: 12px; color: #666; font-weight: normal; }
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # 데이터 로드
     drivers = utils.load_data("drivers")
     if drivers.empty:
         st.warning("등록된 승무원이 없습니다.")
@@ -89,11 +59,11 @@ def render_individual_calendar_tab():
     df_plan = utils.load_data("schedules")
     df_work = utils.load_data("work_history")
     reduction_rules = utils.get_reduction_rules()
+    gh_df = utils.load_data("group_history")
     
-    gh = utils.load_data("group_history")
     h_dict = {}
-    if not gh.empty:
-        for _, r in gh.iterrows():
+    if not gh_df.empty:
+        for _, r in gh_df.iterrows():
             if r['driver_name'] not in h_dict: h_dict[r['driver_name']] = []
             h_dict[r['driver_name']].append((r['start_date'], r['group_name']))
         for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
@@ -107,7 +77,6 @@ def render_individual_calendar_tab():
 
     now = utils.get_kst_now()
 
-    # 날짜 초기화
     if 'indiv_view_year' not in st.session_state: 
         st.session_state.indiv_view_year = now.year
         st.session_state.sb_ind_year = now.year
@@ -117,8 +86,7 @@ def render_individual_calendar_tab():
     
     c_nm, c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([2, 0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
     
-    with c_nm: 
-        target = st.selectbox("승무원 선택", drivers['name'].tolist(), key='sel_driver', label_visibility="collapsed")
+    with c_nm: target = st.selectbox("승무원 선택", drivers['name'].tolist(), key='sel_driver', label_visibility="collapsed")
     with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
     with c_yr: 
         year_range = range(2023, now.year + 3)
@@ -143,6 +111,13 @@ def render_individual_calendar_tab():
     if target:
         year, month = st.session_state.indiv_view_year, st.session_state.indiv_view_month
         filter_ym = f"{year}-{month:02d}"
+        
+        if not gh_df.empty:
+            my_history = gh_df[gh_df['driver_name'] == target].sort_values(by='start_date', ascending=False)
+            if not my_history.empty:
+                current_grp = my_history.iloc[0]['group_name']
+                with st.expander(f"📜 {target}님 소속 조 이력 (현재: {current_grp})", expanded=False):
+                    st.dataframe(my_history[['start_date', 'group_name']], hide_index=True, use_container_width=True)
         
         my_plan = df_plan[(df_plan['name']==target) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
         my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
@@ -176,129 +151,80 @@ def render_individual_calendar_tab():
             cols = st.columns(7)
             for i, day in enumerate(week):
                 with cols[i]:
-                    if day == 0: 
-                        st.write("")
+                    if day == 0: st.write("")
                     else:
                         d_str = f"{year}-{month:02d}-{day:02d}"
                         weekday_str = utils.WEEKDAY_KOREAN[datetime(year, month, day).weekday()]
                         
                         grp = utils.get_group_from_dict(h_dict, target, d_str)
                         auto = utils.calculate_auto_shift(grp, d_str)
+                        grp_txt = f"({grp})" if grp else ""
                         
                         cell_bg = "transparent"
                         txt_content = ""
-                        border_style = "border:1px solid #ddd;" # 기본 테두리
-                        
-                        rec_shift = ""
-                        rec_route = "-"
-                        rec_seq = "-"
-                        rec_car = "-"
+                        border_style = "border:1px solid #ddd;"
                         
                         p_work = my_work[my_work['date'] == d_str] if not my_work.empty else pd.DataFrame()
                         p_plan = my_plan[my_plan['date'] == d_str] if not my_plan.empty else pd.DataFrame()
                         
-                        # [Case 1] 근무 이력(DB) 존재
+                        rec_shift, rec_route, rec_seq, rec_car = "", "-", "-", "-"
+
+                        # [Case 1] 실제 근무 기록 존재
                         if not p_work.empty:
                             w_row = p_work.iloc[0]
                             is_sub = (str(w_row['is_sub']).upper() in ['Y', 'TRUE'])
-                            is_red = utils.is_reduction_target(d_str, w_row['route'], w_row['seq'], reduction_rules)
-                            car_is_red = '감차' in str(w_row['car'])
-                            is_reduction = is_red or car_is_red
-
-                            # [1] 감차 대상 + 대운X => 휴무
-                            if is_reduction and not is_sub:
-                                if auto == '휴무':
-                                    cell_bg = "#f1f3f5"
-                                    txt_content = f"<div style='width:100%; text-align:center;'><div class='cal-badge' style='color:#ff4444; font-weight:bold; font-size:11px;'>🚫 감차</div><div style='color:#999; font-weight:bold; font-size:13px;'>휴무<br>({grp})</div></div>"
-                                    rec_shift = "휴무(감차/원래휴무)"
-                                else:
-                                    cell_bg = "#00592D"
-                                    txt_content = f"<div style='width:100%; text-align:center;'><div class='cal-badge' style='color:#ff4444; font-weight:bold; font-size:11px;'>🚫 감차</div><div style='color:white; font-weight:bold; font-size:13px;'>휴무</div></div>"
-                                    rec_shift = "휴무(감차)"
                             
-                            # [2] 명시적 감차휴무
-                            elif w_row['shift'] == '감차휴무':
+                            # 차량번호가 '감차'라고 적힌 경우만 휴무 처리
+                            if str(w_row['car']).strip() == "감차":
                                 cell_bg = "#00592D"
-                                txt_content = f"<div style='width:100%; text-align:center;'><div class='cal-badge' style='color:#ff4444; font-weight:bold; font-size:11px;'>🚫 감차</div><div style='color:white; font-weight:bold; font-size:13px;'>휴무</div></div>"
+                                txt_content = f"<div style='width:100%; text-align:center;'><div class='cal-badge' style='color:#ff4444; font-weight:bold; font-size:11px;'>🚫 감차휴무</div><div style='color:white; font-weight:bold; font-size:13px;'>휴무 {grp_txt}</div></div>"
                                 rec_shift = "휴무(감차)"
-                            
-                            # [3] 실제 근무 (오전/오후)
-                            elif w_row['shift'] in ['오전', '오후']:
-                                # [수정] 대운자 테두리 색상 제거 (기본 테두리 사용)
-                                # border_style = "border:1px solid #ddd;" (이미 위에서 초기화됨)
-
-                                # 배경색 설정 (대운자 구분을 색상으로만)
+                            else:
+                                # [핵심] 실제 근무 시 감차 여부 상관없이 근무 표시
+                                if w_row['shift'] == '오전': cell_bg = "#1e88e5"
+                                else: cell_bg = "#e53935"
+                                
                                 if is_sub:
-                                    if w_row['shift'] == '오전': cell_bg = "#1565C0" # 대운 오전 (남색)
-                                    else: cell_bg = "#EF6C00" # 대운 오후 (주황)
-                                else:
-                                    if w_row['shift'] == '오전': cell_bg = "#1e88e5" # 일반 오전 (파랑)
-                                    else: cell_bg = "#e53935" # 일반 오후 (빨강)
+                                    if w_row['shift'] == '오전': cell_bg = "#1565C0"
+                                    else: cell_bg = "#EF6C00"
                                 
-                                mark = ""
-                                if is_red: 
-                                    mark += "<div class='cal-badge' style='color:#ff4444; font-weight:bold; font-size:11px;'>🚫 감차근무</div>"
+                                sub_txt = "<span style='color:#FFEB3B; font-weight:bold;'>(대운)</span>" if is_sub else ""
                                 
-                                sub_txt = ""
-                                if is_sub:
-                                    sub_txt = "<span style='color:#FFEB3B; font-weight:bold;'>(대운)</span>"
-
-                                car_text = f"{w_row['car']}"
-                                shift_txt = f"{w_row['shift']} {sub_txt}"
-                                
-                                txt_content = f"<div style='width:100%; text-align:center; color:white;'>{mark}<div style='font-size:14px; font-weight:bold;'>{w_row['route']}노선 {w_row['seq']}순번</div><div style='font-size:13px;'>{car_text}</div><div style='font-size:14px; font-weight:bold; margin-top:2px;'>{shift_txt}</div></div>"
+                                txt_content = f"<div style='width:100%; text-align:center; color:white;'><div style='font-size:14px; font-weight:bold;'>{w_row['route']}노선 {w_row['seq']}순번</div><div style='font-size:13px;'>{w_row['car']}</div><div style='font-size:14px; font-weight:bold; margin-top:2px;'>{w_row['shift']} {sub_txt} <span style='font-size:11px; font-weight:normal;'>{grp_txt}</span></div></div>"
                                 
                                 rec_shift = f"{w_row['shift']}" + (" (대운)" if is_sub else "")
                                 rec_route = w_row['route']
                                 rec_seq = w_row['seq']
                                 rec_car = w_row['car']
-                                
-                            else:
-                                cell_bg = "#00592D"
-                                txt_content = f"<div style='color:white; font-size:13px; font-weight:bold;'>{w_row['shift']}</div>"
-                                rec_shift = w_row['shift']
 
-                        # [Case 2] 스케줄 신청
+                        # [Case 2] 계획(스케줄)만 있는 경우
                         elif not p_plan.empty:
                             pl_row = p_plan.iloc[0]
                             t = pl_row['type']
-                            
                             if t in ['휴무', '감차휴무']:
-                                if auto == '휴무': 
-                                    cell_bg = "#f1f3f5"
-                                    txt_content = f"<div style='color:#999; font-weight:bold; font-size:13px;'>휴무<br>({grp})</div>"
-                                    rec_shift = "휴무(원래휴무)"
-                                else:
-                                    cell_bg = "#00592D"
-                                    mark = "<div class='cal-badge' style='color:#ff4444; font-size:11px; font-weight:bold;'>🚫 감차</div>" if t == '감차휴무' else ""
-                                    txt_content = f"<div style='width:100%; text-align:center;'>{mark}<div style='color:white; font-weight:bold; font-size:13px;'>휴무</div></div>"
-                                    rec_shift = "휴무(신청)"
+                                cell_bg = "#00592D"
+                                txt_content = f"<div style='width:100%; text-align:center;'><div style='color:white; font-weight:bold; font-size:13px;'>휴무 {grp_txt}</div></div>"
+                                rec_shift = "휴무(신청)"
                             else:
                                 cell_bg = utils.get_type_color(t)
-                                txt_content = f"<div style='color:white; font-weight:bold; font-size:13px;'>{t}</div>"
+                                txt_content = f"<div style='color:white; font-weight:bold; font-size:13px;'>{t} {grp_txt}</div>"
                                 rec_shift = t
-                            
-                            if pl_row['note']: rec_route = pl_row['note']
                         
-                        # [Case 3] 데이터 없음
+                        # [Case 3] 자동 스케줄
                         else:
                             if auto == "휴무":
                                 cell_bg = "#f1f3f5"
-                                txt_content = f"<div style='color:#999; font-weight:bold; font-size:13px;'>휴무<br>({grp})</div>"
+                                txt_content = f"<div style='color:#999; font-weight:bold; font-size:13px;'>휴무<br>{grp_txt}</div>"
                                 rec_shift = "휴무(일반)"
                             elif auto == "오전": 
-                                cell_bg="#e3f2fd"; 
-                                txt_content=f"<div style='color:blue; font-size:13px;'>오전 ({grp})</div>"
+                                cell_bg="#e3f2fd"; txt_content=f"<div style='color:blue; font-size:13px;'>오전 {grp_txt}</div>"
                                 rec_shift = "오전(예정)"
                             elif auto == "오후": 
-                                cell_bg="#fff3e0"; 
-                                txt_content=f"<div style='color:red; font-size:13px;'>오후 ({grp})</div>"
+                                cell_bg="#fff3e0"; txt_content=f"<div style='color:red; font-size:13px;'>오후 {grp_txt}</div>"
                                 rec_shift = "오후(예정)"
                             else:
                                 txt_content = "-"
                                 rec_shift = "-"
-                            
-                            rec_route, rec_seq, rec_car = "-", "-", "-"
 
                         st.markdown(f"""
                         <div class='cal-content-box' style='background-color:{cell_bg}; {border_style} border-radius:5px; 
@@ -312,45 +238,17 @@ def render_individual_calendar_tab():
                             {txt_content}
                         </div>""", unsafe_allow_html=True)
                         
-                        weekday_str = utils.WEEKDAY_KOREAN[datetime(year, month, day).weekday()]
                         daily_records.append({
-                            '날짜': d_str,
-                            '요일': weekday_str,
-                            '근무구분': rec_shift,
-                            '노선': rec_route,
-                            '순번': rec_seq,
-                            '차량번호': rec_car
+                            '날짜': d_str, '요일': weekday_str, '조': grp,
+                            '근무구분': rec_shift, '노선': rec_route, '순번': rec_seq, '차량번호': rec_car
                         })
 
         st.divider()
         st.markdown("### 📋 월간 상세 근무 이력")
-        
         if daily_records:
             df_list = pd.DataFrame(daily_records)
-            st.dataframe(
-                df_list, 
-                use_container_width=True, 
-                hide_index=True,
-                column_config={
-                    "날짜": st.column_config.TextColumn("날짜", width="small"),
-                    "요일": st.column_config.TextColumn("요일", width="small"),
-                    "근무구분": st.column_config.TextColumn("근무구분", width="medium"),
-                    "노선": st.column_config.TextColumn("노선", width="small"),
-                    "순번": st.column_config.TextColumn("순번", width="small"),
-                    "차량번호": st.column_config.TextColumn("차량번호", width="small"),
-                }
-            )
-            
+            st.dataframe(df_list, use_container_width=True, hide_index=True)
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_list.to_excel(writer, index=False, sheet_name='Sheet1')
-            processed_data = output.getvalue()
-            
-            st.download_button(
-                label="📥 엑셀로 다운로드",
-                data=processed_data,
-                file_name=f"{target}_{year}년{month}월_근무이력.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.info("데이터가 없습니다.")
+            st.download_button("📥 엑셀로 다운로드", output.getvalue(), f"{target}_{year}년{month}월.xlsx")
