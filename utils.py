@@ -329,11 +329,9 @@ def clean_driver_name(name):
     
     # 괄호만 제거
     s_removed = re.sub(r'\(.*?\)', '', s).strip()
-    
     if not s_removed: 
         s_stripped = s.replace("(", "").replace(")", "").strip()
         return s_stripped
-    
     return s_removed
 
 def calculate_auto_shift(group_name, target_date_str):
@@ -390,32 +388,26 @@ def get_reduction_rules():
 def normalize_key(val):
     if pd.isna(val) or val == "": return ""
     s = str(val).strip()
-    try:
-        return str(int(float(s)))
-    except:
-        return s
+    try: return str(int(float(s)))
+    except: return s
 
 def is_reduction_target(date_str, route, seq, rules):
-    try:
-        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    try: d = datetime.strptime(date_str, "%Y-%m-%d").date()
     except: return False
     is_holi = is_holiday_or_weekend(d)
-    
     tgt_route = normalize_key(route)
     tgt_seq = normalize_key(seq)
-    
     for r in rules:
         if r['start'] <= date_str <= r['end']:
             rule_route = normalize_key(r['route'])
             rule_seq = normalize_key(r['seq'])
-            
             if rule_route == tgt_route and rule_seq == tgt_seq:
                 if r['condition'] == 'Always': return True
                 if r['condition'] == 'Weekend/Holiday' and is_holi: return True
     return False
 
 # ==========================================
-# 5. 로그인 및 사용자 관리
+# 5. 로그인 및 사용자 관리 (기존 유지)
 # ==========================================
 def login_user(username, password):
     df = load_data("users")
@@ -424,15 +416,13 @@ def login_user(username, password):
     if 'username' not in df.columns: return None
     df['username'] = df['username'].astype(str)
     user = df[(df['username'] == username) & (df['password'] == pw_hash)]
-    if not user.empty:
-        return user.iloc[0]['role'], user.iloc[0]['name']
+    if not user.empty: return user.iloc[0]['role'], user.iloc[0]['name']
     return None
 
 def log_login_access(username, name):
     try:
         sh = get_db_connection()
-        try:
-            ws = sh.worksheet("access_logs")
+        try: ws = sh.worksheet("access_logs")
         except gspread.exceptions.WorksheetNotFound:
             ws = sh.add_worksheet(title="access_logs", rows=1000, cols=4)
             ws.append_row(["timestamp", "username", "name", "status"])
@@ -442,16 +432,13 @@ def log_login_access(username, name):
     except: pass
 
 # ==========================================
-# 6. 엑셀 파싱 (범위확장 + 병합대응 + 필터링)
+# 6. 엑셀 파싱 (핵심 수정: 병합 셀 채우기 + 필터 완화)
 # ==========================================
 def parse_roster_excel(file):
     df_raw = pd.read_excel(file, header=None)
-    
-    # 1. 날짜 구분행 찾기
     date_rows = []
     for idx, row in df_raw.iterrows():
         val = str(row[0])
-        # "202x년" 또는 "x월 x일" 패턴을 찾음
         if ("202" in val or "년" in val):
             try:
                 if pd.notnull(df_raw.iloc[idx, 3]) and pd.notnull(df_raw.iloc[idx, 5]):
@@ -460,15 +447,10 @@ def parse_roster_excel(file):
             
     extracted_data = []
     
-    # 2. 날짜별 구간 파싱 (동적 구간 적용)
     for i in range(len(date_rows)):
         start_row = date_rows[i]
-        
-        # 다음 날짜 행이 있으면 거기가 끝, 없으면 파일 끝이 끝
-        if i + 1 < len(date_rows):
-            end_row = date_rows[i+1]
-        else:
-            end_row = len(df_raw)
+        if i + 1 < len(date_rows): end_row = date_rows[i+1]
+        else: end_row = len(df_raw)
             
         try:
             year = int(str(df_raw.iloc[start_row, 0]).replace("년","").strip())
@@ -483,34 +465,37 @@ def parse_roster_excel(file):
         ]
         
         for side in cols_map:
-            # [핵심] 병합된 정보를 기억하기 위한 변수 초기화
+            # [핵심] 노선과 차량번호 모두 기억해야 함 (Fill-down)
             last_route = None
             last_car = None 
             
-            # 헤더(3줄) 건너뛰고 해당 날짜 구간 읽기
             for curr_idx in range(start_row + 3, end_row):
                 try:
-                    # 1. 노선
+                    # 1. 노선 (병합 처리 - 기억하기)
                     raw_route = df_raw.iloc[curr_idx, side['route']]
+                    
+                    # 현재 노선이 있으면 갱신, 없으면 기억된 값 사용
                     if pd.notnull(raw_route) and str(raw_route).strip() != "":
-                        last_route = str(raw_route).strip()
-                    current_route = last_route if last_route else ""
+                        current_route = str(raw_route).strip()
+                        last_route = current_route # 기억 갱신
+                    else:
+                        current_route = last_route if last_route else ""
 
                     # 2. 순번
                     raw_seq = df_raw.iloc[curr_idx, side['seq']]
                     current_seq = str(raw_seq).strip() if pd.notnull(raw_seq) else ""
                     
-                    # 3. 차량번호 (병합 처리 및 쓰레기 제거)
+                    # 3. 차량번호 (병합 처리 + 통계 필터)
                     raw_car = df_raw.iloc[curr_idx, side['car']]
                     current_car = ""
                     
                     if pd.notnull(raw_car):
                         raw_car_str = str(raw_car).strip()
-                        # [필터 1] "명", "대", "계", "합계" 등이 포함되면 해당 줄은 쓰레기로 간주하고 SKIP
+                        # 통계 키워드는 거름
                         trash_keywords = ['계', '합계', '총', '인원', '전일', '금일', '사고', '잔류', '휴차', '정비']
-                        if raw_car_str in ['명', '대'] or any(k in raw_car_str for k in trash_keywords):
+                        if any(k in raw_car_str for k in trash_keywords):
                             current_car = "" 
-                            # 이 줄은 데이터가 아니므로 아래 운전자 읽기 단계에서 걸러지도록 유도
+                            last_car = None # 통계 줄은 기억 끊기
                         else:
                             digits = re.sub(r'[^0-9]', '', raw_car_str)
                             if digits and int(digits) > 100: 
@@ -518,17 +503,18 @@ def parse_roster_excel(file):
                             elif raw_car_str: 
                                 current_car = raw_car_str
                     
-                    # [핵심] 차량번호가 비어있는데, 방금 전 윗줄에 차량번호가 있었다면? -> 병합으로 간주하고 채움 (5024호 해결)
-                    # 단, 위에서 "쓰레기"로 판명나서 비운 거면 채우지 않음 (last_car도 초기화해야 함)
+                    # 현재 차량이 비어있으면 기억된 차량 사용 (Fill-down)
                     if not current_car and last_car:
                         current_car = last_car
                     
-                    if current_car:
-                        last_car = current_car
-                    else:
-                        last_car = None # 끊기면 기억 소거
+                    # 기억 갱신
+                    if current_car: last_car = current_car
+                    else: last_car = None
 
-                    # 4. 운전자 (강력 필터링)
+                    # 노선과 차량번호가 없으면 데이터 아님
+                    if not (current_route and current_car): continue
+
+                    # 4. 운전자 (필터 대폭 완화!)
                     am_fix = clean_driver_name(df_raw.iloc[curr_idx, side['am_fix']])
                     am_sub = clean_driver_name(df_raw.iloc[curr_idx, side['am_sub']])
                     am_final = am_sub if am_sub else am_fix
@@ -537,22 +523,17 @@ def parse_roster_excel(file):
                     pm_sub = clean_driver_name(df_raw.iloc[curr_idx, side['pm_sub']])
                     pm_final = pm_sub if pm_sub else pm_fix
                     
-                    # [필터 2] 이름에 '합계', '총' 같은 통계 단어만 삭제 (명, 대, 원은 허용!)
-                    # 이름에 숫자가 섞여 있으면 제거 (예: 홍길동5044 -> 홍길동)
+                    # [중요] 이름 필터 완화: 통계 단어만 삭제 (명, 대, 원은 사람 이름일 수 있으므로 허용)
                     trash_name_keywords = ["합계", "총", "계", "인원", "잔류", "투입"]
                     
                     if am_final:
                         if any(k in am_final for k in trash_name_keywords): am_final = ""
-                        else: am_final = re.sub(r'[0-9]+', '', am_final).strip()
+                        else: am_final = re.sub(r'[0-9]+', '', am_final).strip() # 숫자만 제거
 
                     if pm_final:
                         if any(k in pm_final for k in trash_name_keywords): pm_final = ""
                         else: pm_final = re.sub(r'[0-9]+', '', pm_final).strip()
 
-                    # [최종 저장 조건] 유효한 이름이 하나라도 있거나, 차량번호+노선이 있으면 저장
-                    if not (am_final or pm_final or (current_car and current_route)):
-                        continue
-                        
                     extracted_data.append({
                         'date': current_date, 'name': am_final, 'shift': '오전', 
                         'route': current_route, 'seq': current_seq, 'car': current_car, 
@@ -564,37 +545,26 @@ def parse_roster_excel(file):
                         'route': current_route, 'seq': current_seq, 'car': current_car, 
                         'is_sub': bool(pm_sub), 'orig_fix': pm_fix
                     })
-                except Exception:
-                    continue
+                except Exception: continue
 
     return pd.DataFrame(extracted_data)
 
-# ==========================================
-# 7. 관리자 메모장
-# ==========================================
+# ... (get_admin_memo, save_admin_memo 기존 유지) ...
 def get_admin_memo():
     sh = get_db_connection()
-    try:
-        ws = sh.worksheet("admin_memo")
+    try: ws = sh.worksheet("admin_memo")
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
-        try:
-            ws.update(values=[[""]], range_name="A1", value_input_option='USER_ENTERED')
-        except:
-            ws.update("A1", [[""]], value_input_option='USER_ENTERED')
-    
+        try: ws.update(values=[[""]], range_name="A1", value_input_option='USER_ENTERED')
+        except: ws.update("A1", [[""]], value_input_option='USER_ENTERED')
     val = ws.acell('A1').value
     return val if val else ""
 
 def save_admin_memo(text):
     sh = get_db_connection()
-    try:
-        ws = sh.worksheet("admin_memo")
+    try: ws = sh.worksheet("admin_memo")
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="admin_memo", rows=10, cols=2)
-    
-    try:
-        ws.update(values=[[text]], range_name="A1", value_input_option='USER_ENTERED')
-    except:
-        ws.update("A1", [[text]], value_input_option='USER_ENTERED')
+    try: ws.update(values=[[text]], range_name="A1", value_input_option='USER_ENTERED')
+    except: ws.update("A1", [[text]], value_input_option='USER_ENTERED')
     clear_cache_after_save()
