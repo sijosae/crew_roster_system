@@ -576,3 +576,56 @@ def save_admin_memo(text):
     except:
         ws.update("A1", [[text]], value_input_option='USER_ENTERED')
     clear_cache_after_save()
+
+# ... (기존 코드들) ...
+
+# [추가] 관리자 비밀번호 검증 함수
+def verify_admin_password(input_pw):
+    # 입력된 비밀번호를 해시화
+    input_hash = make_hash(input_pw)
+    
+    # users 시트에서 관리자(admin) 권한을 가진 사람의 비밀번호와 일치하는지 확인
+    df_users = load_data("users")
+    if df_users.empty: return False
+    
+    # role이 'admin'인 행들만 필터링
+    admins = df_users[df_users['role'] == 'admin']
+    
+    # 관리자 중 비밀번호가 일치하는 사람이 한 명이라도 있으면 통과
+    if input_hash in admins['password'].values:
+        return True
+    return False
+
+# [추가] 스케줄 삭제 함수 (조건 매칭)
+def delete_schedule_event(date_str, name, type_str):
+    sh = get_db_connection()
+    ws = sh.worksheet("schedules")
+    
+    # 모든 데이터 가져오기
+    # (행 번호를 알아야 삭제 가능하므로 cell 객체 검색보다 전체 로드 후 매칭이 안전할 수 있음)
+    # 하지만 데이터가 많아지면 느려지므로, 여기서는 텍스트 검색을 활용
+    
+    try:
+        # 날짜로 먼저 필터링 (날짜열: C열, 인덱스 3)
+        cell_list = ws.findall(date_str)
+        
+        target_row = None
+        for cell in cell_list:
+            # 해당 행의 이름(B열)과 타입(D열) 확인
+            row_val = ws.row_values(cell.row)
+            # row_val[1] = Name, row_val[2] = Date, row_val[3] = Type
+            if len(row_val) > 3:
+                if row_val[1] == name and row_val[3] == type_str:
+                    target_row = cell.row
+                    break
+        
+        if target_row:
+            ws.delete_rows(target_row)
+            clear_cache_after_save()
+            return True
+        else:
+            return False
+            
+    except Exception as e:
+        st.error(f"삭제 중 오류 발생: {e}")
+        return False
