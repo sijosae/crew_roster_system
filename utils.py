@@ -6,7 +6,6 @@ import hashlib
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-import time
 import holidays
 import re
 
@@ -57,15 +56,39 @@ def inject_custom_css():
         .bar-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -10px !important; margin-right: 2px; position: relative; z-index: 2; }
         .bar-single { border-radius: 4px; margin: 0 2px 1px 2px; z-index: 3; }
         .schedule-spacer { height: 34px; margin-bottom: 1px; background-color: transparent; }
-        button[kind="primary"], div[data-testid="stButton"] button { background-color: #00592D !important; border-color: #00592D !important; color: white !important; }
-        button[kind="primary"]:hover, div[data-testid="stButton"] button:hover { background-color: #004d26 !important; border-color: #004d26 !important; color: white !important; }
+        button[kind="primary"], div[data-testid="stButton"] button, div[data-testid="stFormSubmitButton"] button { background-color: #00592D !important; border-color: #00592D !important; color: white !important; }
+        button[kind="primary"]:hover, div[data-testid="stButton"] button:hover, div[data-testid="stFormSubmitButton"] button:hover { background-color: #004d26 !important; border-color: #004d26 !important; color: white !important; }
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
+
+        /* [전체화면 로딩 오버레이] st.spinner()를 화면 전체가 어두워지며 중앙에 뜨는 형태로 변경 */
+        div[data-testid="stSpinner"] {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100vw !important; height: 100vh !important;
+            background: rgba(0,0,0,0.45);
+            z-index: 99999 !important;
+            display: flex !important;
+            align-items: center; justify-content: center;
+        }
+        div[data-testid="stSpinner"] > div {
+            background: white;
+            padding: 24px 36px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+            font-size: 16px;
+            font-weight: bold;
+            width: fit-content !important;
+            max-width: 90vw;
+            flex: 0 0 auto !important;
+        }
     </style>
     """, unsafe_allow_html=True)
 
 # ==========================================
 # 2. DB 연결 및 데이터 로드
 # ==========================================
+DEFAULT_SPREADSHEET_ID = "1G7czKDDzze-ovTCLqb_uXCvZOMgrhqr1akxtTWITG-w"
+
 @st.cache_resource
 def get_cached_sheet_object():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -78,7 +101,8 @@ def get_cached_sheet_object():
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        sh = client.open("bus_schedule_db")
+        spreadsheet_id = st.secrets.get("spreadsheet_id", DEFAULT_SPREADSHEET_ID)
+        sh = client.open_by_key(spreadsheet_id)
         return sh
     except Exception as e:
         st.error(f"❌ 구글 연결 실패: {e}")
@@ -107,8 +131,14 @@ def load_data(sheet_name):
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame()
 
-def clear_cache_after_save():
-    st.cache_data.clear()
+def clear_cache_after_save(sheet_name=None):
+    if sheet_name is None:
+        st.cache_data.clear()
+    elif isinstance(sheet_name, (list, tuple)):
+        for s in sheet_name:
+            load_data.clear(s)
+    else:
+        load_data.clear(sheet_name)
 
 # ==========================================
 # 3. 데이터 저장 (절대 좌표 강제)
@@ -133,13 +163,8 @@ def save_range_batch(name_list, start, end, type, shift, note):
     if rows_to_add:
         sh = get_db_connection()
         ws = sh.worksheet("schedules")
-        existing_data = ws.get_all_values()
-        next_row = len(existing_data) + 1
-        try:
-            ws.update(values=rows_to_add, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
-        except TypeError:
-            ws.update(f"A{next_row}", rows_to_add, value_input_option='USER_ENTERED')
-        clear_cache_after_save()
+        ws.append_rows(rows_to_add, value_input_option='USER_ENTERED')
+        clear_cache_after_save("schedules")
     return len(rows_to_add), generated_ids
 
 def add_company_event(date, title):
@@ -148,14 +173,9 @@ def add_company_event(date, title):
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d")
     row_id = now_kst.strftime("%y%m%d%H%M%S")
-    existing_data = ws.get_all_values()
-    next_row = len(existing_data) + 1
     data = [[str(row_id), str(date), str(title), str(created_at)]]
-    try:
-        ws.update(values=data, range_name=f"A{next_row}", value_input_option='USER_ENTERED')
-    except TypeError:
-        ws.update(f"A{next_row}", data, value_input_option='USER_ENTERED')
-    clear_cache_after_save()
+    ws.append_rows(data, value_input_option='USER_ENTERED')
+    clear_cache_after_save("company_events")
     return row_id
 
 def add_log(msg, ids=None, sheet_name=None, level="INFO"):
@@ -186,47 +206,91 @@ def delete_rows_by_ids(sheet_name, id_list):
     rows_to_delete.sort(reverse=True)
     for r_idx in rows_to_delete:
         ws.delete_rows(r_idx)
-    clear_cache_after_save()
+    clear_cache_after_save(sheet_name)
     return True
 
-def save_work_history(df_new):
+WORK_HISTORY_REQUIRED_COLS = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']
+
+def work_history_sheet_name(year):
+    return f"work_history_{int(year)}"
+
+# [연도별 분리] work_history가 25만 행까지 커지면서 매번 전체를 읽는 비용이 커져
+# 연도별 시트(work_history_2026 등)로 나눔. 이 앱의 모든 조회는 이미 "선택된 연도" 하나만
+# 다루므로(개인별/연간집계/차량별현황), 연도 시트 하나만 읽으면 충분함.
+def load_work_history_for_year(year):
+    return load_data(work_history_sheet_name(year))
+
+def _save_work_history_year_group(year, df_new_year):
+    sheet_name = work_history_sheet_name(year)
     sh = get_db_connection()
     try:
-        ws = sh.worksheet("work_history")
+        ws = sh.worksheet(sheet_name)
     except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title="work_history", rows=1000, cols=10)
-        ws.append_row(['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at'])
+        ws = sh.add_worksheet(title=sheet_name, rows=1000, cols=10)
+        ws.append_row(WORK_HISTORY_REQUIRED_COLS)
 
     existing_data = ws.get_all_values()
     df_old = pd.DataFrame()
     if len(existing_data) > 1:
         headers = existing_data.pop(0)
         df_old = pd.DataFrame(existing_data, columns=headers)
-    
+
+    for c in WORK_HISTORY_REQUIRED_COLS:
+        if c not in df_new_year.columns: df_new_year[c] = ""
+        if c not in df_old.columns: df_old[c] = ""
+    df_new_year = df_new_year[WORK_HISTORY_REQUIRED_COLS]
+
     if df_old.empty:
-        df_final = df_new
+        df_final = df_new_year
     else:
-        required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']
-        for c in required_cols:
-            if c not in df_new.columns: df_new[c] = ""
-            if c not in df_old.columns: df_old[c] = ""
-        df_new = df_new[required_cols]
-        df_old = df_old[required_cols]
-        df_combined = pd.concat([df_old, df_new])
+        df_old = df_old[WORK_HISTORY_REQUIRED_COLS]
+        df_combined = pd.concat([df_old, df_new_year])
         df_final = df_combined.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
-        
+
     df_final = df_final.sort_values(by=['date', 'name'])
     ws.clear()
-    
-    header = [['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']]
+
+    header = [WORK_HISTORY_REQUIRED_COLS]
     data_to_write = df_final.fillna("").astype(str).values.tolist()
     all_values = header + data_to_write
     try:
         ws.update(values=all_values, range_name="A1", value_input_option='USER_ENTERED')
     except TypeError:
         ws.update("A1", all_values, value_input_option='USER_ENTERED')
-    clear_cache_after_save()
-    return len(df_new)
+    clear_cache_after_save(sheet_name)
+    return len(df_new_year)
+
+def save_work_history(df_new):
+    if df_new.empty:
+        return 0
+    df_new = df_new.copy()
+    years = pd.to_datetime(df_new['date'], errors='coerce').dt.year
+    saved = 0
+    for year in sorted(years.dropna().unique()):
+        group = df_new[years == year].copy()
+        saved += _save_work_history_year_group(int(year), group)
+    return saved
+
+# [마이그레이션] 연도별 분리 전에 쓰던 단일 work_history 시트를 work_history_{year} 시트들로
+# 옮기는 1회성 작업. 예전 시트를 찾아서 옮긴 뒤 이름을 바꿔두므로, 다시 실행해도
+# (예전 시트가 더 이상 없어서) 아무 일도 안 일어나 안전하게 여러 번 눌러도 됨.
+def migrate_old_work_history():
+    sh = get_db_connection()
+    try:
+        ws_old = sh.worksheet("work_history")
+    except gspread.exceptions.WorksheetNotFound:
+        return {"status": "not_found", "count": 0}
+
+    existing_data = ws_old.get_all_values()
+    if len(existing_data) <= 1:
+        return {"status": "empty", "count": 0}
+
+    headers = existing_data.pop(0)
+    df_old = pd.DataFrame(existing_data, columns=headers)
+    saved = save_work_history(df_old)
+
+    ws_old.update_title(f"work_history_migrated_{get_kst_now().strftime('%Y%m%d_%H%M%S')}")
+    return {"status": "done", "count": saved}
 
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
@@ -239,7 +303,7 @@ def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     except: pass
     ws_history = sh.worksheet("group_history")
     ws_history.append_row(["", name, group_name, start_date, created_at])
-    clear_cache_after_save()
+    clear_cache_after_save(["drivers", "group_history"])
     return True
 
 def set_driver_resignation(name, r_date):
@@ -249,7 +313,7 @@ def set_driver_resignation(name, r_date):
         cell = ws.find(name)
         if cell:
             ws.update_cell(cell.row, 5, r_date)
-            clear_cache_after_save()
+            clear_cache_after_save("drivers")
     except: pass
 
 def delete_driver(driver_name):
@@ -269,7 +333,7 @@ def delete_driver(driver_name):
         cells = ws_s.findall(driver_name)
         for cell in reversed(cells): ws_s.delete_rows(cell.row)
     except: pass
-    clear_cache_after_save()
+    clear_cache_after_save(["drivers", "group_history", "schedules"])
 
 def add_user_account(username, password, role, name):
     sh = get_db_connection()
@@ -277,7 +341,7 @@ def add_user_account(username, password, role, name):
     k_date = get_kst_now().strftime("%Y-%m-%d")
     new_row = [username, make_hash(password), role, name, k_date]
     ws.append_row(new_row)
-    clear_cache_after_save()
+    clear_cache_after_save("users")
     return True
 
 def delete_user_account(username):
@@ -287,7 +351,7 @@ def delete_user_account(username):
         cell = ws.find(username)
         if cell:
             ws.delete_rows(cell.row)
-            clear_cache_after_save()
+            clear_cache_after_save("users")
     except: pass
 
 def update_user_password(username, new_password):
@@ -297,7 +361,7 @@ def update_user_password(username, new_password):
         cell = ws.find(username)
         if cell:
             ws.update_cell(cell.row, 2, make_hash(new_password))
-            clear_cache_after_save()
+            clear_cache_after_save("users")
             return True
     except: pass
     return False
@@ -310,7 +374,7 @@ def add_reduction_rule(start, end, route, seq, cond):
         ws = sh.add_worksheet(title="reduction_rules", rows=100, cols=5)
         ws.append_row(['start_date', 'end_date', 'route', 'sequence', 'condition'])
     ws.append_row([str(start), str(end), str(route), str(seq), cond])
-    clear_cache_after_save()
+    clear_cache_after_save("reduction_rules")
 
 # ==========================================
 # 4. 날짜 및 스케줄 계산 로직
@@ -437,7 +501,7 @@ def log_login_access(username, name):
             ws.append_row(["timestamp", "username", "name", "status"])
         timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
         ws.append_row([timestamp, username, name, "Login Success"])
-        st.cache_data.clear()
+        clear_cache_after_save("access_logs")
     except: pass
 
 # ==========================================
@@ -575,7 +639,6 @@ def save_admin_memo(text):
         ws.update(values=[[text]], range_name="A1", value_input_option='USER_ENTERED')
     except:
         ws.update("A1", [[text]], value_input_option='USER_ENTERED')
-    clear_cache_after_save()
 
 # ... (기존 코드들) ...
 
@@ -621,7 +684,7 @@ def delete_schedule_event(date_str, name, type_str):
         
         if target_row:
             ws.delete_rows(target_row)
-            clear_cache_after_save()
+            clear_cache_after_save("schedules")
             return True
         else:
             return False

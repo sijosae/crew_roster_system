@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import calendar
+import concurrent.futures
 from datetime import datetime
 import io
 import utils
@@ -51,44 +52,31 @@ def render_individual_calendar_tab():
     </style>
     """, unsafe_allow_html=True)
 
+    now = utils.get_kst_now()
+    # [연도별 분리] work_history_{year} 시트를 읽으려면 연도를 먼저 확정해야 하므로,
+    # 이 초기화 블록을 work_history 로딩보다 앞으로 옮김
+    if 'indiv_view_year' not in st.session_state:
+        st.session_state.indiv_view_year = now.year
+        st.session_state.sb_ind_year = now.year
+    if 'indiv_view_month' not in st.session_state:
+        st.session_state.indiv_view_month = now.month
+        st.session_state.sb_ind_month = now.month
+
+    # [최적화] 승무원 목록만 가볍게 먼저 조회. 실제로 승무원을 선택하기 전까지는
+    # schedules/work_history/group_history 같은 무거운 시트를 아예 안 불러옴
     drivers = utils.load_data("drivers")
     if drivers.empty:
         st.warning("등록된 승무원이 없습니다.")
         return
-    
-    df_plan = utils.load_data("schedules")
-    df_work = utils.load_data("work_history")
-    reduction_rules = utils.get_reduction_rules()
-    gh_df = utils.load_data("group_history")
-    
-    h_dict = {}
-    if not gh_df.empty:
-        for _, r in gh_df.iterrows():
-            if r['driver_name'] not in h_dict: h_dict[r['driver_name']] = []
-            h_dict[r['driver_name']].append((r['start_date'], r['group_name']))
-        for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
-    
-    if df_work.empty:
-        df_work = pd.DataFrame(columns=['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub'])
-    else:
-        required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub']
-        for c in required_cols:
-            if c not in df_work.columns: df_work[c] = ""
 
-    now = utils.get_kst_now()
+    PLACEHOLDER = "승무원을 선택하세요"
+    driver_options = [PLACEHOLDER] + drivers['name'].tolist()
 
-    if 'indiv_view_year' not in st.session_state: 
-        st.session_state.indiv_view_year = now.year
-        st.session_state.sb_ind_year = now.year
-    if 'indiv_view_month' not in st.session_state: 
-        st.session_state.indiv_view_month = now.month
-        st.session_state.sb_ind_month = now.month
-    
     c_nm, c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([2, 0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
-    
-    with c_nm: target = st.selectbox("승무원 선택", drivers['name'].tolist(), key='sel_driver', label_visibility="collapsed")
+
+    with c_nm: target = st.selectbox("승무원 선택", driver_options, key='sel_driver', label_visibility="collapsed")
     with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
-    with c_yr: 
+    with c_yr:
         year_range = range(2023, now.year + 3)
         try: y_idx = list(year_range).index(st.session_state.indiv_view_year)
         except: y_idx = 0
@@ -97,7 +85,7 @@ def render_individual_calendar_tab():
             st.session_state.indiv_view_year = selected_year
             st.rerun()
     with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
-    with c_mo: 
+    with c_mo:
         month_range = range(1, 13)
         selected_month = st.selectbox("월", month_range, index=st.session_state.indiv_view_month - 1, key='sb_ind_month', label_visibility="collapsed")
         if selected_month != st.session_state.indiv_view_month:
@@ -105,8 +93,41 @@ def render_individual_calendar_tab():
             st.rerun()
     with c_prev: st.button("◀", key="i_prev_btn", on_click=prev_month_indiv)
     with c_next: st.button("▶", key="i_next_btn", on_click=next_month_indiv)
-    
+
     st.divider()
+
+    if target == PLACEHOLDER:
+        st.info("👆 승무원을 선택하면 근무 현황이 표시됩니다.")
+        return
+
+    # [최적화] 승무원이 실제로 선택된 경우에만 무거운 시트 4개를 병렬로 조회
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as _ex:
+        _f_schedules = _ex.submit(utils.load_data, "schedules")
+        _f_work = _ex.submit(utils.load_work_history_for_year, st.session_state.indiv_view_year)
+        _f_group_hist = _ex.submit(utils.load_data, "group_history")
+        _f_reduction = _ex.submit(utils.get_reduction_rules)
+        try:
+            df_plan = _f_schedules.result()
+            df_work = _f_work.result()
+            gh_df = _f_group_hist.result()
+            reduction_rules = _f_reduction.result()
+        except Exception as e:
+            st.error(f"❌ 데이터 로딩 중 오류가 발생했습니다: {e}")
+            st.stop()
+
+    h_dict = {}
+    if not gh_df.empty:
+        for _, r in gh_df.iterrows():
+            if r['driver_name'] not in h_dict: h_dict[r['driver_name']] = []
+            h_dict[r['driver_name']].append((r['start_date'], r['group_name']))
+        for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
+
+    if df_work.empty:
+        df_work = pd.DataFrame(columns=['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub'])
+    else:
+        required_cols = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub']
+        for c in required_cols:
+            if c not in df_work.columns: df_work[c] = ""
 
     if target:
         year, month = st.session_state.indiv_view_year, st.session_state.indiv_view_month

@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import calendar
+import concurrent.futures
 import utils
 
 # ... (헬퍼 함수들은 기존과 동일) ...
@@ -41,15 +42,22 @@ def _get_history_dict():
     return h_dict
 
 def _render_detail_search(is_admin=False):
+    search_term = st.text_input("🔍 이름 또는 비고 검색", placeholder="이름을 입력하세요", key="search_term_input")
+    # [최적화] 버튼을 누르기 전엔 schedules를 아예 안 불러옴
+    if st.button("🔍 조회", key="btn_query_detail", type="primary"):
+        st.session_state['search_detail_queried'] = True
+    if not st.session_state.get('search_detail_queried'):
+        st.info("조회 버튼을 눌러주세요.")
+        return
+
     df = utils.load_data("schedules")
     if df.empty: st.info("데이터가 없습니다."); return
-    search_term = st.text_input("🔍 이름 또는 비고 검색", placeholder="이름을 입력하세요", key="search_term_input")
     if search_term: df = df[df['name'].astype(str).str.contains(search_term) | df['note'].astype(str).str.contains(search_term)]
     if not df.empty:
         h_dict = _get_history_dict()
         orig_shifts = []
-        for _, row in df.iterrows():
-            d_str = row['date']; name = row['name']
+        # [최적화] iterrows() 대신 zip으로 순회
+        for d_str, name in zip(df['date'], df['name']):
             grp = utils.get_group_from_dict(h_dict, name, d_str)
             auto = utils.calculate_auto_shift(grp, d_str)
             if grp and auto: orig_shifts.append(f"{auto} ({grp})")
@@ -89,23 +97,48 @@ def _render_yearly_stats_logic():
         sel_year = st.selectbox("년도", year_range, index=y_idx, key='sb_search_year', label_visibility="collapsed")
         if sel_year != st.session_state.search_stat_year: st.session_state.search_stat_year = sel_year; st.rerun()
     st.info("💡 **25일 이상** 근무한 달이 **3개월 연속**되면 빨간색으로 표시됩니다.")
+    # [최적화] 버튼을 누르기 전엔 work_history를 아예 안 불러옴
+    if st.button("📊 조회", key="btn_query_yearly", type="primary"):
+        st.session_state['search_yearly_queried'] = True
     st.divider()
+    if not st.session_state.get('search_yearly_queried'):
+        st.info("조회 버튼을 눌러주세요.")
+        return
+
     year = st.session_state.search_stat_year
-    df_drivers = utils.load_data("drivers")
+    # [최적화] 무관한 시트 2개를 동시에 요청 + work_history는 선택된 연도 시트만 읽음
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
+        _f_drivers = _ex.submit(utils.load_data, "drivers")
+        _f_work = _ex.submit(utils.load_work_history_for_year, year)
+        try:
+            df_drivers = _f_drivers.result()
+            df_work = _f_work.result()
+        except Exception as e:
+            st.error(f"❌ 데이터 로딩 중 오류가 발생했습니다: {e}")
+            st.stop()
     if df_drivers.empty: st.warning("등록된 승무원이 없습니다."); return
-    df_work = utils.load_data("work_history")
     result_data = []
     sorted_drivers = df_drivers.sort_values(by='name')['name'].tolist()
     if not df_work.empty:
+        df_work = df_work.copy()
         df_work['dt'] = pd.to_datetime(df_work['date'], errors='coerce')
-        df_year = df_work[df_work['dt'].dt.year == year]
+        df_year = df_work[(df_work['dt'].dt.year == year) & (df_work['shift'].isin(['오전', '오후']))]
     else: df_year = pd.DataFrame()
+
+    # [최적화] 승무원 358명 x 12개월을 매번 필터링하던 걸 -> groupby로 한 번에 집계 (13,000+회 필터 호출 제거)
+    if not df_year.empty:
+        df_year = df_year.copy()
+        df_year['month'] = df_year['dt'].dt.month
+        pivot = df_year.groupby(['name', 'month']).size().unstack(fill_value=0).reindex(columns=range(1, 13), fill_value=0)
+    else:
+        pivot = pd.DataFrame(columns=range(1, 13))
+
     for name in sorted_drivers:
-        row_data = {"이름": name}; total_year = 0
-        my_data = df_year[df_year['name'] == name] if not df_year.empty else pd.DataFrame()
+        row_data = {"이름": name}
+        counts = pivot.loc[name] if name in pivot.index else None
+        total_year = 0
         for m in range(1, 13):
-            if not my_data.empty: cnt = len(my_data[(my_data['dt'].dt.month == m) & (my_data['shift'].isin(['오전', '오후']))])
-            else: cnt = 0
+            cnt = int(counts[m]) if counts is not None else 0
             row_data[f"{m}월"] = cnt; total_year += cnt
         row_data["연간 합계"] = total_year; result_data.append(row_data)
     if result_data:
@@ -140,12 +173,19 @@ def _render_vehicle_stats_logic():
         st.selectbox("월", month_range, index=st.session_state.veh_month - 1, key='veh_month', label_visibility="collapsed")
     with c_prev: st.button("◀", key="v_prev_btn", on_click=_prev_month_veh)
     with c_next: st.button("▶", key="v_next_btn", on_click=_next_month_veh)
+    # [최적화] 버튼을 누르기 전엔 work_history를 아예 안 불러옴
+    if st.button("🚌 조회", key="btn_query_vehicle", type="primary"):
+        st.session_state['search_vehicle_queried'] = True
     st.divider()
+    if not st.session_state.get('search_vehicle_queried'):
+        st.info("조회 버튼을 눌러주세요.")
+        return
 
     year = st.session_state.veh_year; month = st.session_state.veh_month; filter_ym = f"{year}-{month:02d}"
     reduction_rules = utils.get_reduction_rules()
-    df_work = utils.load_data("work_history")
-    
+    # [최적화] work_history 전체 대신 선택된 연도 시트만 읽음
+    df_work = utils.load_work_history_for_year(year)
+
     if df_work.empty: st.info("근무 데이터가 없습니다."); return
     df_month = df_work[df_work['date'].astype(str).str.startswith(filter_ym)]
     if df_month.empty: st.info(f"{year}년 {month}월 데이터가 없습니다."); return
@@ -156,15 +196,20 @@ def _render_vehicle_stats_logic():
         except: return 999999
     sorted_cars = sorted(valid_cars, key=try_int)
     
+    # [최적화] iterrows() 대신 zip으로 순회 (한 달치 근무기록 규모라도 Series 생성 비용을 피함)
     schedule_map = {}
-    for _, row in df_month.iterrows():
+    route_col = df_month['route'] if 'route' in df_month.columns else pd.Series([''] * len(df_month), index=df_month.index)
+    seq_col = df_month['seq'] if 'seq' in df_month.columns else pd.Series([''] * len(df_month), index=df_month.index)
+    for date_val, car_val, shift_val, name_val, route_val, seq_val in zip(
+        df_month['date'], df_month['car'], df_month['shift'], df_month['name'], route_col, seq_col
+    ):
         try:
-            d = int(pd.to_datetime(row['date']).day)
-            c = str(row['car']).strip()
-            s = str(row['shift']).strip() 
-            n = str(row['name']).strip()
-            r_num = str(row.get('route', '')).strip()
-            r_seq = str(row.get('seq', '')).strip()
+            d = int(pd.to_datetime(date_val).day)
+            c = str(car_val).strip()
+            s = str(shift_val).strip()
+            n = str(name_val).strip()
+            r_num = str(route_val).strip()
+            r_seq = str(seq_val).strip()
             key = (d, c, s)
             # 이름이 있는 데이터를 우선시 (중복시 빈칸 데이터는 무시)
             if key in schedule_map and schedule_map[key]['name'] != "" and n == "": continue

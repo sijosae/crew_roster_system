@@ -1,62 +1,69 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import time
 import traceback
 import utils  # 공통 도구함
 
 # ==========================================
-# 1. 빠른 등록 다이얼로그 (팝업창)
+# 1. 빠른 등록 - 인라인 패널
 # ==========================================
-@st.dialog("➕ 빠른 등록")
-def show_input_dialog():
+# [변경] 원래 @st.dialog(모달 팝업)였으나, 모달을 여는 순간 뒷배경 페이지 전체가
+# 다시 렌더링되는 Streamlit의 구조적 특성 때문에 total_status.py의 @st.fragment 버튼
+# 안에서 호출되는 "인라인 패널"로 바꿈 (뒷배경을 전혀 건드리지 않고 그 자리에서 펼쳐짐)
+def render_quick_input_content(modal_slot=None):
     tab1, tab2 = st.tabs(["👤 승무원 일정", "🏢 회사 행사"])
-    
+
     # 탭 1: 승무원 일정
     with tab1:
         st.write("달력을 보면서 바로 입력하세요.")
         names_str = st.text_area("이름 (엔터 구분)", height=100, key="quick_names")
         rng = st.date_input("기간", [], help="시작/종료일 선택", key="quick_range")
-        
+
         c1, c2 = st.columns(2)
         with c1: typ = st.selectbox("구분", ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"], key="quick_type")
         with c2: sft = st.selectbox("근무", ["자동", "오전", "오후", "휴무", "기타"], key="quick_shift")
         nte = st.text_input("비고", key="quick_note")
-        
+
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
                 try:
                     with st.spinner('저장 중...'):
                         count, ids = utils.save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                    
+
                     st.toast("✅ 저장 완료!", icon="🔄")
                     utils.add_log(f"입력 성공: {len(lst)}명", ids=ids, sheet_name="schedules")
-                    # 대기 시간 제거 (즉시 닫힘)
-                    st.rerun()
+                    st.session_state['show_quick_input'] = False
+                    # [변경] 전체 새로고침(로딩 화면)이 뜨기 전에 모달부터 먼저 닫음
+                    if modal_slot: modal_slot.empty()
+                    # [최적화] 전체 앱이 아니라 이 탭(fragment)만 다시 그림
+                    st.rerun(scope="fragment")
                 except Exception as e:
                     st.error(f"🚨 저장 중 오류 발생: {e}")
             else:
                 st.warning("이름과 기간을 입력해주세요.")
-                
+
     # 탭 2: 회사 행사
     with tab2:
         st.write("회사 주요 행사를 달력 상단에 표시합니다.")
         ed_list = st.date_input("행사 기간", [], help="시작/종료일", key="quick_event_range")
         et = st.text_input("행사 내용", key="quick_event_title")
-        
+
         if st.button("회사 행사 저장", type="primary", use_container_width=True, key="quick_event_save"):
             if et and len(ed_list) > 0:
                 try:
                     with st.spinner('저장 중...'):
                         for d in pd.date_range(ed_list[0], ed_list[-1]):
+                            # add_company_event 내부에서 이미 company_events 캐시만 선택적으로 지움
                             utils.add_company_event(d.strftime("%Y-%m-%d"), et)
-                        st.cache_data.clear()
-                        
+
                     st.toast("✅ 행사 저장 완료!", icon="🔄")
                     utils.add_log(f"행사 등록: {et}", sheet_name="company_events")
-                    # 대기 시간 제거 (즉시 닫힘)
-                    st.rerun()
+                    st.session_state['show_quick_input'] = False
+                    # [변경] 전체 새로고침(로딩 화면)이 뜨기 전에 모달부터 먼저 닫음
+                    if modal_slot: modal_slot.empty()
+                    # [최적화] 전체 앱이 아니라 이 탭(fragment)만 다시 그림
+                    st.rerun(scope="fragment")
                 except Exception:
                     st.error("오류 발생")
             else:
@@ -150,9 +157,13 @@ def render_input_tab():
                 st.rerun()
         
         st.divider()
-        try:
-            rules_df = utils.load_data("reduction_rules")
-            if not rules_df.empty:
-                st.dataframe(rules_df)
-        except:
-            st.caption("등록된 규칙 없음")
+        # [최적화] 버튼을 누르기 전엔 reduction_rules를 아예 안 불러옴
+        if st.button("📋 등록된 규칙 조회", key="btn_query_rules"):
+            st.session_state['rules_queried'] = True
+        if st.session_state.get('rules_queried'):
+            try:
+                rules_df = utils.load_data("reduction_rules")
+                if not rules_df.empty:
+                    st.dataframe(rules_df)
+            except:
+                st.caption("등록된 규칙 없음")

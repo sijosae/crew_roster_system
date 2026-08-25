@@ -1,12 +1,65 @@
 import streamlit as st
 import pandas as pd
 import calendar
+import concurrent.futures
 from datetime import datetime, timedelta
 import utils
 
 # ==========================================
 # 내부 헬퍼 함수
 # ==========================================
+# [변경] render_calendar_tab 전체를 @st.fragment로 감싸므로, 이 함수는 더 이상
+# 별도 fragment가 아님 (Streamlit은 fragment 안에 fragment를 못 넣음)
+def _render_quick_input_button(input_func):
+    # (모달 대신 인라인 패널을 쓰는 이유는 input_mgr.render_quick_input_content 쪽 주석 참고)
+    if 'show_quick_input' not in st.session_state:
+        st.session_state['show_quick_input'] = False
+
+    if st.button("➕ 빠른 입력", type="primary", use_container_width=True):
+        st.session_state['show_quick_input'] = not st.session_state['show_quick_input']
+
+    if st.session_state['show_quick_input']:
+        # [변경] st.dialog 없이 CSS(position:fixed)만으로 모달처럼 보이게 구성.
+        # 뒷배경 강제 재렌더링은 st.dialog 자체의 문제였지, "모달처럼 보이는 것"과는 무관했음.
+        st.markdown("""
+        <style>
+        .st-key-quick_input_backdrop {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 999;
+        }
+        .st-key-quick_input_panel {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 480px;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 1000;
+            background: white;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+            border-radius: 10px;
+            padding: 8px;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        # [변경] st.empty()로 감싸서, 저장 완료 시 전체 새로고침(st.rerun)이 일어나기 전에
+        # 모달 자체를 먼저 지울 수 있게 함 (input_mgr.render_quick_input_content에서 사용)
+        modal_slot = st.empty()
+        with modal_slot.container():
+            st.container(key="quick_input_backdrop")
+            with st.container(border=True, key="quick_input_panel"):
+                c_title, c_close = st.columns([5, 1])
+                with c_title: st.markdown("#### ➕ 빠른 등록")
+                with c_close:
+                    if st.button("✕", key="quick_input_close"):
+                        st.session_state['show_quick_input'] = False
+                        st.rerun(scope="fragment")
+                if input_func:
+                    input_func(modal_slot)
+                else:
+                    st.warning("입력 기능 로드 실패")
+
 def prev_cal_callback():
     if st.session_state.view_month == 1:
         st.session_state.view_year -= 1
@@ -25,24 +78,18 @@ def next_cal_callback():
     st.session_state.sb_view_year = st.session_state.view_year
     st.session_state.sb_view_month = st.session_state.view_month
 
-def get_stats_optimized(date_str, all_drivers_df, today_schedules_df, history_dict):
-    active_drivers_list = []
-    if not all_drivers_df.empty:
-        has_resign_col = 'resigned_date' in all_drivers_df.columns
-        for _, dr in all_drivers_df.iterrows():
-            is_active = True
-            if has_resign_col:
-                r_date = str(dr['resigned_date']).strip()
-                if r_date and date_str > r_date: is_active = False
-            if is_active: active_drivers_list.append(dr['name'])
-    
+def get_stats_optimized(date_str, drivers_list, today_schedules_records, history_dict):
+    # [최적화] drivers_list/today_schedules_records는 렌더링 시작 시 한 번만 만든 일반 파이썬
+    # list-of-dict임 (호출부 참고). iterrows()는 매 호출마다 pandas Series를 새로 만들어 느리므로,
+    # 이 함수(달력 하루당 1회, 한 달이면 최대 31번 호출)에서는 가벼운 리스트 순회만 하도록 함.
+    active_drivers_list = [dr['name'] for dr in drivers_list if not (dr['resigned_date'] and date_str > dr['resigned_date'])]
+
     total = len(active_drivers_list)
     am_cnt, pm_cnt, off_cnt = 0, 0, 0
     manual_map = {}
-    if not today_schedules_df.empty:
-        for _, row in today_schedules_df.iterrows():
-            manual_map[row['name']] = (row['type'], row.get('shift', '자동'))
-    
+    for row in today_schedules_records:
+        manual_map[row['name']] = (row['type'], row.get('shift', '자동'))
+
     for name in active_drivers_list:
         final_shift = None
         if name in manual_map:
@@ -132,8 +179,11 @@ def calculate_layout_rows(df_month):
 # ==========================================
 # 3. 메인 렌더링 함수 (수정됨: 메모장 추가)
 # ==========================================
+# [최적화] 이 탭 전체를 fragment로 감싸서, 여기서 일어나는 상호작용(빠른입력 저장,
+# 년월 이동 등)이 다른 5개 탭까지 다시 실행시키지 않고 이 탭만 다시 그리게 함
+@st.fragment
 def render_calendar_tab(input_func=None):
-    if st.session_state.get('last_error_msg'): 
+    if st.session_state.get('last_error_msg'):
         st.error("오류 발생")
         st.code(st.session_state['last_error_msg'])
     
@@ -163,62 +213,90 @@ def render_calendar_tab(input_func=None):
     
     c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
     with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
-    with c2: 
+    with c2:
         years = list(range(2023, now.year + 3))
-        st.selectbox("년도", years, key='sb_view_year', label_visibility="collapsed")
+        y_idx = years.index(st.session_state.view_year) if st.session_state.view_year in years else 0
+        st.selectbox("년도", years, index=y_idx, key='sb_view_year', label_visibility="collapsed")
         if st.session_state.sb_view_year != st.session_state.view_year:
-            st.session_state.view_year = st.session_state.sb_view_year; st.rerun()
+            st.session_state.view_year = st.session_state.sb_view_year; st.rerun(scope="fragment")
 
     with c3: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
-    with c4: 
-        st.selectbox("월", range(1, 13), key='sb_view_month', label_visibility="collapsed")
+    with c4:
+        months = list(range(1, 13))
+        m_idx = months.index(st.session_state.view_month) if st.session_state.view_month in months else 0
+        st.selectbox("월", months, index=m_idx, key='sb_view_month', label_visibility="collapsed")
         if st.session_state.sb_view_month != st.session_state.view_month:
-            st.session_state.view_month = st.session_state.sb_view_month; st.rerun()
+            st.session_state.view_month = st.session_state.sb_view_month; st.rerun(scope="fragment")
 
     with c5: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
     with c6: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
     
     with c7:
         if st.session_state.get('auth_status') == 'admin':
-            if st.button("➕ 빠른 입력", type="primary", use_container_width=True): 
-                if input_func:
-                    input_func()
-                else:
-                    st.warning("입력 기능 로드 실패")
-            
+            _render_quick_input_button(input_func)
+
     st.divider()
     
     year, month = st.session_state.view_year, st.session_state.view_month
-    
-    df = utils.load_data("schedules")
+
+    # [최적화] 서로 무관한 시트 4개를 순차적으로 기다리는 대신 동시에 요청.
+    # 캐시 미스 상황(cold cache)에서는 "합산 대기시간"이 "가장 느린 것 1개" 수준으로 줄어듦
+    # (스피너는 app.py에서 전체 탭을 한 번에 감싸므로 여기서는 따로 두지 않음)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as _ex:
+        _f_schedules = _ex.submit(utils.load_data, "schedules")
+        _f_events = _ex.submit(utils.load_data, "company_events")
+        _f_drivers = _ex.submit(utils.load_data, "drivers")
+        _f_group_hist = _ex.submit(utils.load_data, "group_history")
+        try:
+            df = _f_schedules.result()
+            df_events = _f_events.result()
+            all_drivers = _f_drivers.result()
+            group_history_df = _f_group_hist.result()
+        except Exception as e:
+            st.error(f"❌ 데이터 로딩 중 오류가 발생했습니다: {e}")
+            st.stop()
+
     df_month = df[df['date'].astype(str).str.startswith(f"{year}-{month:02d}")] if not df.empty else pd.DataFrame()
-    
+
     full_schedule_map = {}
     if not df.empty:
-        for _, row in df.iterrows(): full_schedule_map[(row['name'], str(row['date']))] = row['type']
-        
-    df_events = utils.load_data("company_events")
+        # [최적화] iterrows() 대신 zip으로 순회 (7천+행 규모라 Series 생성 비용을 피함)
+        for n, d, t in zip(df['name'], df['date'].astype(str), df['type']):
+            full_schedule_map[(n, d)] = t
+
     df_events_month = df_events[df_events['date'].astype(str).str.startswith(f"{year}-{month:02d}")] if not df_events.empty else pd.DataFrame()
-    
-    all_drivers = utils.load_data("drivers")
-    group_history_df = utils.load_data("group_history")
+
+    # [최적화] 하루 렌더링(get_day_html)마다 반복 호출되는 get_stats_optimized가
+    # DataFrame.iterrows()를 매번 새로 돌지 않도록, 여기서 딱 한 번만 일반 리스트로 변환해둠
+    if not all_drivers.empty:
+        if 'resigned_date' in all_drivers.columns:
+            drivers_list = [
+                {'name': n, 'resigned_date': str(r).strip() if r else ''}
+                for n, r in zip(all_drivers['name'], all_drivers['resigned_date'])
+            ]
+        else:
+            drivers_list = [{'name': n, 'resigned_date': ''} for n in all_drivers['name']]
+    else:
+        drivers_list = []
+
     history_dict = {}
     if not group_history_df.empty:
         for _, row in group_history_df.iterrows():
             if row['driver_name'] not in history_dict: history_dict[row['driver_name']] = []
             history_dict[row['driver_name']].append((row['start_date'], row['group_name']))
         for k in history_dict: history_dict[k].sort(key=lambda x:x[0], reverse=True)
-        
+
     _, last_day = calendar.monthrange(year, month)
 
     def get_day_html(day, is_horiz=True):
         d_str = f"{year}-{month:02d}-{day:02d}"
         wd_idx = datetime(year, month, day).weekday()
-        
+
         today_sch = df_month[df_month['date'] == d_str] if not df_month.empty else pd.DataFrame()
         today_evt = df_events_month[df_events_month['date'] == d_str] if not df_events_month.empty else pd.DataFrame()
-        
-        full_stat, short_stat = get_stats_optimized(d_str, all_drivers, today_sch, history_dict)
+
+        today_sch_records = today_sch.to_dict('records') if not today_sch.empty else []
+        full_stat, short_stat = get_stats_optimized(d_str, drivers_list, today_sch_records, history_dict)
         
         box_style = ""
         if d_str == now.strftime("%Y-%m-%d"):
@@ -336,4 +414,4 @@ def render_calendar_tab(input_func=None):
             with st.spinner("저장 중..."):
                 utils.save_admin_memo(new_memo)
             st.success("저장되었습니다.")
-            st.rerun()
+            st.rerun(scope="fragment")
