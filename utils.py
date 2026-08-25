@@ -87,8 +87,6 @@ def inject_custom_css():
 # ==========================================
 # 2. DB 연결 및 데이터 로드
 # ==========================================
-DEFAULT_SPREADSHEET_ID = "1G7czKDDzze-ovTCLqb_uXCvZOMgrhqr1akxtTWITG-w"
-
 @st.cache_resource
 def get_cached_sheet_object():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -101,8 +99,13 @@ def get_cached_sheet_object():
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        spreadsheet_id = st.secrets.get("spreadsheet_id", DEFAULT_SPREADSHEET_ID)
-        sh = client.open_by_key(spreadsheet_id)
+        # [수정] spreadsheet_id가 secrets에 없으면(운영처럼 설정 안 한 환경) 예전처럼
+        # 이름으로 찾음. 로컬 개발용 사본처럼 ID를 명시해둔 환경만 ID로 찾음.
+        spreadsheet_id = st.secrets.get("spreadsheet_id")
+        if spreadsheet_id:
+            sh = client.open_by_key(spreadsheet_id)
+        else:
+            sh = client.open("bus_schedule_db")
         return sh
     except Exception as e:
         st.error(f"❌ 구글 연결 실패: {e}")
