@@ -99,7 +99,12 @@ def get_cached_sheet_object():
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        sh = client.open("bus_schedule_db")
+        # secrets에 spreadsheet_id가 있으면(로컬 개발용 사본) ID로, 없으면(운영) 이름으로 찾음
+        spreadsheet_id = st.secrets.get("spreadsheet_id")
+        if spreadsheet_id:
+            sh = client.open_by_key(spreadsheet_id)
+        else:
+            sh = client.open("bus_schedule_db")
         return sh
     except Exception as e:
         st.error(f"❌ 구글 연결 실패: {e}")
