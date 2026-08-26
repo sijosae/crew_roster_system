@@ -1,4 +1,5 @@
 import streamlit as st
+import extra_streamlit_components as stx
 import utils
 # 탭 모듈 임포트
 from tabs import total_status, individual, input_mgr, driver_mgr, search, logs
@@ -6,14 +7,16 @@ from tabs import total_status, individual, input_mgr, driver_mgr, search, logs
 def main():
     st.set_page_config(page_title="우진교통 배차 관리 시스템", layout="wide")
     utils.inject_custom_css()
+    cookie_manager = stx.CookieManager(key="cookie_manager")
 
     if 'auth_status' not in st.session_state:
         st.session_state['auth_status'] = None
 
-    # [세션 유지] 새로고침하면 session_state는 초기화되지만 주소창의 쿼리파라미터는 남아있으므로,
-    # 로그인 시 심어둔 서명된 토큰으로 다시 로그인 화면을 안 거치고 자동 로그인 처리
+    # [세션 유지] 새로고침하면 session_state는 초기화되지만 쿠키는 남아있으므로,
+    # 로그인 시 심어둔 토큰(쿠키)으로 다시 로그인 화면을 안 거치고 자동 로그인 처리.
+    # 쿠키엔 무작위 토큰만 들어있고 실제 아이디/권한/이름은 서버 메모리에 있음(utils._session_store).
     if st.session_state['auth_status'] is None:
-        token = st.query_params.get("auth")
+        token = cookie_manager.get("auth")
         if token:
             info = utils.verify_session_token(token)
             if info:
@@ -43,7 +46,9 @@ def main():
                         st.session_state['auth_status'] = user[0]
                         st.session_state['user_name'] = user[1]
                         st.session_state['_pending_login_log'] = uid
-                        st.query_params["auth"] = utils.make_session_token(uid, user[0], user[1])
+                        new_token = utils.make_session_token(uid, user[0], user[1])
+                        cookie_manager.set("auth", new_token, key="set_auth_cookie",
+                                            max_age=utils.SESSION_MAX_AGE_DAYS * 86400)
 
                         # [핵심 수정] 로그인 성공 시 기존 날짜 정보 초기화 -> 오늘 날짜로 재설정됨
                         keys_to_clear = [
@@ -67,8 +72,10 @@ def main():
     with c_head2:
         if st.button("로그아웃"):
             st.session_state['auth_status'] = None
-            if "auth" in st.query_params:
-                del st.query_params["auth"]
+            old_token = cookie_manager.get("auth")
+            if old_token:
+                utils.invalidate_session_token(old_token)
+                cookie_manager.delete("auth", key="del_auth_cookie")
             # 로그아웃 시에도 깔끔하게 세션 정리
             keys_to_clear = [
                 'view_year', 'view_month', 'sb_view_year', 'sb_view_month',
