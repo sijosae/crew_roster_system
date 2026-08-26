@@ -10,6 +10,16 @@ def main():
     if 'auth_status' not in st.session_state:
         st.session_state['auth_status'] = None
 
+    # [세션 유지] 새로고침하면 session_state는 초기화되지만 주소창의 쿼리파라미터는 남아있으므로,
+    # 로그인 시 심어둔 서명된 토큰으로 다시 로그인 화면을 안 거치고 자동 로그인 처리
+    if st.session_state['auth_status'] is None:
+        token = st.query_params.get("auth")
+        if token:
+            info = utils.verify_session_token(token)
+            if info:
+                st.session_state['auth_status'] = info['role']
+                st.session_state['user_name'] = info['name']
+
     # [변경] st.empty()로 로그인 화면 자리를 잡아두면, 로그인 성공 시 st.rerun() 없이
     # 같은 스크립트 실행 안에서 이 자리를 지우고 바로 메인 화면으로 이어갈 수 있음.
     # (예전엔 rerun으로 페이지 구조 전체를 다시 그리면서 전환 순간 화면이 잠깐 멈춘 것처럼 보였음)
@@ -33,6 +43,7 @@ def main():
                         st.session_state['auth_status'] = user[0]
                         st.session_state['user_name'] = user[1]
                         st.session_state['_pending_login_log'] = uid
+                        st.query_params["auth"] = utils.make_session_token(uid, user[0], user[1])
 
                         # [핵심 수정] 로그인 성공 시 기존 날짜 정보 초기화 -> 오늘 날짜로 재설정됨
                         keys_to_clear = [
@@ -56,6 +67,8 @@ def main():
     with c_head2:
         if st.button("로그아웃"):
             st.session_state['auth_status'] = None
+            if "auth" in st.query_params:
+                del st.query_params["auth"]
             # 로그아웃 시에도 깔끔하게 세션 정리
             keys_to_clear = [
                 'view_year', 'view_month', 'sb_view_year', 'sb_view_month',

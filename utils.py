@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import calendar
 import hashlib
+import hmac
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
@@ -492,6 +493,31 @@ def login_user(username, password):
     if not user.empty:
         return user.iloc[0]['role'], user.iloc[0]['name']
     return None
+
+# [세션 유지] 새로고침해도 다시 로그인 안 하도록, URL 쿼리파라미터에 로그인 정보를
+# 서명(HMAC)해서 저장해둠. session_state는 새로고침 시 초기화되지만 쿼리파라미터는
+# 브라우저 주소에 남아있어서 다음 스크립트 실행에서 이걸로 자동 로그인 처리함.
+_SESSION_SECRET = "woojin_crew_roster_session_v1"
+_SESSION_MAX_AGE_DAYS = 7
+
+def make_session_token(username, role, name):
+    issued = int(get_kst_now().timestamp())
+    payload = f"{username}|{role}|{name}|{issued}"
+    sig = hmac.new(_SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}|{sig}"
+
+def verify_session_token(token):
+    try:
+        username, role, name, issued, sig = token.split("|")
+        payload = f"{username}|{role}|{name}|{issued}"
+        expected = hmac.new(_SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        if int(get_kst_now().timestamp()) - int(issued) > _SESSION_MAX_AGE_DAYS * 86400:
+            return None
+        return {"username": username, "role": role, "name": name}
+    except Exception:
+        return None
 
 def log_login_access(username, name):
     try:
