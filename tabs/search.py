@@ -23,14 +23,6 @@ def _next_month_search():
     else: st.session_state.search_stat_month += 1
     st.session_state.sb_search_year = st.session_state.search_stat_year
 
-def _prev_month_veh():
-    if st.session_state.veh_month == 1: st.session_state.veh_year -= 1; st.session_state.veh_month = 12
-    else: st.session_state.veh_month -= 1
-
-def _next_month_veh():
-    if st.session_state.veh_month == 12: st.session_state.veh_year += 1; st.session_state.veh_month = 1
-    else: st.session_state.veh_month += 1
-
 def _get_history_dict():
     gh = utils.load_data("group_history")
     h_dict = {}
@@ -95,7 +87,7 @@ def _render_yearly_stats_logic():
         try: y_idx = list(year_range).index(st.session_state.search_stat_year)
         except: y_idx = 0
         sel_year = st.selectbox("년도", year_range, index=y_idx, key='sb_search_year', label_visibility="collapsed")
-        if sel_year != st.session_state.search_stat_year: st.session_state.search_stat_year = sel_year; st.rerun()
+        if sel_year != st.session_state.search_stat_year: st.session_state.search_stat_year = sel_year; st.rerun(scope="fragment")
     st.info("💡 **25일 이상** 근무한 달이 **3개월 연속**되면 빨간색으로 표시됩니다.")
     # [최적화] 버튼을 누르기 전엔 work_history를 아예 안 불러옴
     if st.button("📊 조회", key="btn_query_yearly", type="primary"):
@@ -159,20 +151,7 @@ def _highlight_gamcha_cells(val):
 
 def _render_vehicle_stats_logic():
     _init_search_session_state()
-    c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
-    now = utils.get_kst_now()
-    with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
-    with c_yr: 
-        year_range = range(2023, now.year + 3)
-        try: y_idx = list(year_range).index(st.session_state.veh_year)
-        except: y_idx = 0
-        st.selectbox("년도", year_range, index=y_idx, key='veh_year', label_visibility="collapsed")
-    with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
-    with c_mo: 
-        month_range = range(1, 13)
-        st.selectbox("월", month_range, index=st.session_state.veh_month - 1, key='veh_month', label_visibility="collapsed")
-    with c_prev: st.button("◀", key="v_prev_btn", on_click=_prev_month_veh)
-    with c_next: st.button("▶", key="v_next_btn", on_click=_next_month_veh)
+    utils.render_month_nav("veh_month", "veh_year", "veh_month")
     # [최적화] 버튼을 누르기 전엔 work_history를 아예 안 불러옴
     if st.button("🚌 조회", key="btn_query_vehicle", type="primary"):
         st.session_state['search_vehicle_queried'] = True
@@ -258,16 +237,18 @@ def _render_vehicle_stats_logic():
         st.download_button(label="📥 차량별 현황 엑셀 다운로드", data=output.getvalue(), file_name=f"{year}년_{month}월_차량별근무현황.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="btn_down_vehicle_stats")
     else: st.info("표시할 데이터가 없습니다.")
 
-def render_view_manage_tab():
-    st.subheader("📊 데이터 조회 (관리자)")
-    t1, t2, t3 = st.tabs(["🔍 상세 이력 조회", "📅 연간 근무 집계", "🚌 월간 차량별 현황"])
-    with t1: _render_detail_search(is_admin=True)
-    with t2: _render_yearly_stats_logic()
-    with t3: _render_vehicle_stats_logic()
+_SEARCH_SUBMENU = ["상세 이력 조회", "연간 근무 집계", "월간 차량별 현황"]
 
+@st.fragment
+def render_view_manage_tab():
+    section = utils.render_submenu(_SEARCH_SUBMENU, "submenu_search_admin")
+    if section == "연간 근무 집계": _render_yearly_stats_logic()
+    elif section == "월간 차량별 현황": _render_vehicle_stats_logic()
+    else: _render_detail_search(is_admin=True)
+
+@st.fragment
 def render_public_search_tab():
-    st.subheader("📊 데이터 조회")
-    t1, t2, t3 = st.tabs(["🔍 상세 이력 조회", "📅 연간 근무 집계", "🚌 월간 차량별 현황"])
-    with t1: _render_detail_search(is_admin=False)
-    with t2: _render_yearly_stats_logic()
-    with t3: _render_vehicle_stats_logic()
+    section = utils.render_submenu(_SEARCH_SUBMENU, "submenu_search_public")
+    if section == "연간 근무 집계": _render_yearly_stats_logic()
+    elif section == "월간 차량별 현황": _render_vehicle_stats_logic()
+    else: _render_detail_search(is_admin=False)

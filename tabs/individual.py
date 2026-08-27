@@ -6,24 +6,6 @@ from datetime import datetime
 import io
 import utils
 
-def prev_month_indiv():
-    if st.session_state.indiv_view_month == 1:
-        st.session_state.indiv_view_year -= 1
-        st.session_state.indiv_view_month = 12
-    else:
-        st.session_state.indiv_view_month -= 1
-    st.session_state.sb_ind_year = st.session_state.indiv_view_year
-    st.session_state.sb_ind_month = st.session_state.indiv_view_month
-
-def next_month_indiv():
-    if st.session_state.indiv_view_month == 12:
-        st.session_state.indiv_view_year += 1
-        st.session_state.indiv_view_month = 1
-    else:
-        st.session_state.indiv_view_month += 1
-    st.session_state.sb_ind_year = st.session_state.indiv_view_year
-    st.session_state.sb_ind_month = st.session_state.indiv_view_month
-
 def calculate_real_stats(df_work, reduction_rules, h_dict, target_name):
     cnt_am = 0
     cnt_pm = 0
@@ -38,9 +20,8 @@ def calculate_real_stats(df_work, reduction_rules, h_dict, target_name):
         
     return cnt_am, cnt_pm
 
+@st.fragment
 def render_individual_calendar_tab():
-    st.subheader("👤 승무원별 월간 근무 현황 (통합)")
-    
     st.markdown("""
     <style>
     @media (max-width: 640px) {
@@ -57,10 +38,8 @@ def render_individual_calendar_tab():
     # 이 초기화 블록을 work_history 로딩보다 앞으로 옮김
     if 'indiv_view_year' not in st.session_state:
         st.session_state.indiv_view_year = now.year
-        st.session_state.sb_ind_year = now.year
     if 'indiv_view_month' not in st.session_state:
         st.session_state.indiv_view_month = now.month
-        st.session_state.sb_ind_month = now.month
 
     # [최적화] 승무원 목록만 가볍게 먼저 조회. 실제로 승무원을 선택하기 전까지는
     # schedules/work_history/group_history 같은 무거운 시트를 아예 안 불러옴
@@ -72,27 +51,11 @@ def render_individual_calendar_tab():
     PLACEHOLDER = "승무원을 선택하세요"
     driver_options = [PLACEHOLDER] + drivers['name'].tolist()
 
-    c_nm, c_yr_txt, c_yr, c_mo_txt, c_mo, c_prev, c_next = st.columns([2, 0.4, 0.8, 0.3, 0.7, 0.4, 0.4])
-
-    with c_nm: target = st.selectbox("승무원 선택", driver_options, key='sel_driver', label_visibility="collapsed")
-    with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
-    with c_yr:
-        year_range = range(2023, now.year + 3)
-        try: y_idx = list(year_range).index(st.session_state.indiv_view_year)
-        except: y_idx = 0
-        selected_year = st.selectbox("년도", year_range, index=y_idx, key='sb_ind_year', label_visibility="collapsed")
-        if selected_year != st.session_state.indiv_view_year:
-            st.session_state.indiv_view_year = selected_year
-            st.rerun()
-    with c_mo_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
-    with c_mo:
-        month_range = range(1, 13)
-        selected_month = st.selectbox("월", month_range, index=st.session_state.indiv_view_month - 1, key='sb_ind_month', label_visibility="collapsed")
-        if selected_month != st.session_state.indiv_view_month:
-            st.session_state.indiv_view_month = selected_month
-            st.rerun()
-    with c_prev: st.button("◀", key="i_prev_btn", on_click=prev_month_indiv)
-    with c_next: st.button("▶", key="i_next_btn", on_click=next_month_indiv)
+    c_nm, c_nav = st.columns([2, 2.7])
+    with c_nm:
+        target = st.selectbox("승무원 선택", driver_options, key='sel_driver', label_visibility="collapsed")
+    with c_nav:
+        utils.render_month_nav("indiv_month", "indiv_view_year", "indiv_view_month")
 
     st.divider()
 

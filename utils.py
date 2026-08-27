@@ -37,7 +37,7 @@ def get_type_color(type_name):
 def inject_custom_css():
     st.markdown("""
     <style>
-        .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; max-width: 100% !important; }
+        .block-container { padding-top: 1.2rem !important; padding-bottom: 1rem !important; padding-left: 1rem !important; padding-right: 0.5rem !important; max-width: 100% !important; }
         div[data-testid="column"] { padding: 0px !important; gap: 0px !important; }
         .horizontal-scroll-container { display: flex; overflow-x: auto; gap: 0px; padding-bottom: 15px; width: 100%; }
         .calendar-day-box { border: 1px solid #e9ecef; min-height: 200px; padding: 0; background-color: white; display: flex; flex-direction: column; height: auto !important; }
@@ -60,6 +60,72 @@ def inject_custom_css():
         button[kind="primary"], div[data-testid="stButton"] button, div[data-testid="stFormSubmitButton"] button { background-color: #00592D !important; border-color: #00592D !important; color: white !important; }
         button[kind="primary"]:hover, div[data-testid="stButton"] button:hover, div[data-testid="stFormSubmitButton"] button:hover { background-color: #004d26 !important; border-color: #004d26 !important; color: white !important; }
         @media (max-width: 640px) { h1 { font-size: 1.6rem !important; } .mobile-font { font-size: 10px !important; } .mobile-header { font-size: 11px !important; } }
+
+        /* [상위 탭] 진짜 st.tabs()로 만든 메인 탭(휴무 현황/근무 현황/...)을 서브메뉴보다 눈에 띄게 */
+        [data-testid="stTab"] p { font-size: 16px !important; font-weight: 700 !important; }
+        /* 탭 내용이 탭 바로 바로 아래 붙도록 위쪽 여백 축소 (서브메뉴가 상위 탭이랑 너무 떨어져 보이던 것) */
+        [data-testid="stTabContent"] { padding-top: 0.4rem !important; }
+
+        /* [서브메뉴 공통] utils.render_submenu()가 만드는 키(submenu_*_btn_*)는 전부 이 스타일을 씀.
+           키가 버튼(<button>) 자신이 아니라 그 조상 div에 붙어서 자손 선택자를 쓰고, 명시도를
+           위 전역 버튼 스타일(!important)보다 높이려고 조상 클래스를 같이 넣음. */
+        div[class*="st-key-submenu_"] div[data-testid="stButton"] button,
+        div[class*="st-key-submenu_"] div[data-testid="stButton"] button:hover,
+        div[class*="st-key-submenu_"] div[data-testid="stButton"] button:focus,
+        div[class*="st-key-submenu_"] div[data-testid="stButton"] button:active {
+            background: transparent !important;
+            border: none !important;
+            border-bottom: 2px solid transparent !important;
+            box-shadow: none !important;
+            padding: 0 8px 4px 8px !important;
+            border-radius: 0 !important;
+            color: #888 !important;
+            font-weight: 600 !important;
+            font-size: 13px !important;
+            min-height: 0 !important;
+            height: auto !important;
+            width: auto !important;
+        }
+        /* 서브메뉴 버튼이 칸을 꽉 채우지 않고 글자 크기만큼만 차지하도록 컬럼을 shrink-to-fit
+           (Streamlit 컬럼의 실제 data-testid는 "stColumn"임 - "column"이 아님, 테스트 앱으로 확인함) */
+        div[class*="st-key-submenu_"] div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            gap: 4px !important;
+            justify-content: flex-start !important;
+        }
+        div[class*="st-key-submenu_"] div[data-testid="stColumn"] {
+            width: auto !important; min-width: 0 !important; flex: 0 0 auto !important;
+        }
+
+        /* [월 이동 묶음] utils.render_month_nav()가 만드는 monthnav_ 컨테이너: 화면이 좁아져도
+           줄바꿈 대신 가로 스크롤로 빠짐. ◀▶ 버튼은 34px 고정, 가운데 셀렉트박스가 나머지를 채움.
+           [중요] 모바일(좁은 화면)에서는 Streamlit이 각 stColumn에 자체적으로 width:100%에
+           가까운 반응형 규칙을 걸어서(컬럼을 세로로 쌓으려고) desktop에서 잘 먹던 비율 기반
+           크기가 무시되고 3칸이 전부 꽉 차려고 해서 서로 겹쳐 튀어나갔음(실제 375px 모바일
+           화면으로 재현/확인함). 그래서 1번째/3번째 컬럼(버튼)은 폭을 직접 고정하고,
+           2번째 컬럼(셀렉트박스)만 남는 공간을 갖게 nth-child로 명시적으로 강제함. */
+        div[class*="st-key-monthnav_"] {
+            overflow-x: auto !important;
+            max-width: 100% !important;
+        }
+        div[class*="st-key-monthnav_"] div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            gap: 4px !important;
+            width: 100% !important;
+        }
+        div[class*="st-key-monthnav_"] div[data-testid="stColumn"]:nth-of-type(1),
+        div[class*="st-key-monthnav_"] div[data-testid="stColumn"]:nth-of-type(3) {
+            width: 38px !important; min-width: 38px !important; max-width: 38px !important;
+            flex: 0 0 38px !important;
+        }
+        div[class*="st-key-monthnav_"] div[data-testid="stColumn"]:nth-of-type(2) {
+            width: auto !important; min-width: 0 !important; flex: 1 1 auto !important;
+        }
+        div[class*="st-key-monthnav_"] div[data-testid="stButton"] button {
+            width: 34px !important; min-width: 34px !important; max-width: 34px !important;
+            padding: 0.2rem 0 !important;
+            font-size: 12px !important;
+        }
 
         /* [전체화면 로딩 오버레이] st.spinner()를 화면 전체가 어두워지며 중앙에 뜨는 형태로 변경 */
         div[data-testid="stSpinner"] {
@@ -84,6 +150,90 @@ def inject_custom_css():
         }
     </style>
     """, unsafe_allow_html=True)
+
+# [공용 UI] 텍스트 링크 스타일의 서브메뉴. 탭(st.tabs) 안에 또 탭을 넣으면 화면이 중구난방이라,
+# 어디서 쓰든 똑같이 생기게 이 함수 하나로 통일함. 기본 스타일은 inject_custom_css()에 정의돼
+# 있고, 여기서는 "지금 선택된 항목"에만 초록 밑줄을 얹는 부분만 처리함.
+def render_submenu(options, key_prefix, default_index=0):
+    state_key = f"{key_prefix}_active"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = options[default_index]
+    if st.session_state[state_key] not in options:
+        st.session_state[state_key] = options[default_index]
+
+    with st.container(key=f"submenu_{key_prefix}"):
+        cols = st.columns(len(options) + 1)
+        for i, opt in enumerate(options):
+            with cols[i]:
+                if st.button(opt, key=f"{key_prefix}_btn_{i}"):
+                    st.session_state[state_key] = opt
+                    st.rerun(scope="fragment")
+
+    active = st.session_state[state_key]
+    active_idx = options.index(active)
+    st.markdown(f"""
+    <style>
+    .st-key-{key_prefix}_btn_{active_idx} div[data-testid="stButton"] button,
+    .st-key-{key_prefix}_btn_{active_idx} div[data-testid="stButton"] button:hover,
+    .st-key-{key_prefix}_btn_{active_idx} div[data-testid="stButton"] button:focus,
+    .st-key-{key_prefix}_btn_{active_idx} div[data-testid="stButton"] button:active {{
+        color: #00592D !important;
+        border-bottom: 2px solid #00592D !important;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+    return active
+
+# [공용 UI] "년도(select) / (◀)(월 select)(▶)" 조합. 모든 탭에서 똑같은 모양으로 쓰려고
+# 하나로 뺌. 세 개(◀,월,▶)는 모바일에서도 줄바꿈 안 되게 monthnav_ 컨테이너로 묶음.
+# year_state_key/month_state_key: st.session_state에 이미 있는 현재 년/월 값 키.
+def render_month_nav(key_prefix, year_state_key, month_state_key, min_year=2023, year_span=3):
+    now = get_kst_now()
+    cur_year = st.session_state[year_state_key]
+    cur_month = st.session_state[month_state_key]
+
+    # [월 단위 선택] Streamlit엔 월 전용 피커가 없어서(date_input은 항상 일까지 나옴),
+    # "2026년 08월"처럼 월 단위로 이미 묶인 항목을 셀렉트박스 하나로 고르게 함.
+    options = [(y, m) for y in range(min_year, now.year + year_span + 1) for m in range(1, 13)]
+    ym_key = f"{key_prefix}_ym_sel"
+
+    # [중요] 버튼(◀▶)이 session_state의 년/월만 바꾸고 셀렉트박스 자기 자신의 위젯 상태는
+    # 그대로 두면, 다음 줄의 "index=idx"는 무시되고(이미 키가 있는 위젯이라) 예전 값 그대로
+    # 남아있는 셀렉트박스 값이 "사용자가 바꾼 값"으로 오인되어 버튼이 바꾼 값을 도로 덮어씀.
+    # 그래서 버튼 콜백에서 셀렉트박스의 위젯 상태(ym_key)도 같이 맞춰줘야 함.
+    def _prev():
+        y, m = st.session_state[year_state_key], st.session_state[month_state_key]
+        if m == 1: y, m = y - 1, 12
+        else: m = m - 1
+        st.session_state[year_state_key] = y
+        st.session_state[month_state_key] = m
+        st.session_state[ym_key] = (y, m)
+
+    def _next():
+        y, m = st.session_state[year_state_key], st.session_state[month_state_key]
+        if m == 12: y, m = y + 1, 1
+        else: m = m + 1
+        st.session_state[year_state_key] = y
+        st.session_state[month_state_key] = m
+        st.session_state[ym_key] = (y, m)
+
+    with st.container(key=f"monthnav_{key_prefix}"):
+        c_prev, c_pick, c_next = st.columns([0.15, 1, 0.15])
+        with c_prev:
+            st.button("◀", key=f"{key_prefix}_prev", on_click=_prev)
+        with c_pick:
+            idx = options.index((cur_year, cur_month)) if (cur_year, cur_month) in options else 0
+            picked = st.selectbox(
+                "년월 선택", options, index=idx, format_func=lambda ym: f"{ym[0]}년 {ym[1]}월",
+                key=ym_key, label_visibility="collapsed"
+            )
+        with c_next:
+            st.button("▶", key=f"{key_prefix}_next", on_click=_next)
+
+    if picked != (st.session_state[year_state_key], st.session_state[month_state_key]):
+        st.session_state[year_state_key] = picked[0]
+        st.session_state[month_state_key] = picked[1]
+        st.rerun(scope="fragment")
 
 # ==========================================
 # 2. DB 연결 및 데이터 로드
@@ -144,8 +294,233 @@ def clear_cache_after_save(sheet_name=None):
         load_data.clear(sheet_name)
 
 # ==========================================
+# 2-1. 감사 로그(작업 이력) + 롤백
+# ==========================================
+# [추가] 로그인 상태에서 일어나는 생성/삭제/수정을 전부 별도 시트(audit_log)에 기록하고,
+# 각 기록마다 반대 동작을 실행해서 되돌릴 수 있게 함. action은 화면/기능별로 구체적인
+# 태그를 쓰고(schedule_create 등), 롤백은 그 태그에 맞는 "반대 동작"을 직접 호출하는
+# 방식으로 만듦 - 시트마다 식별 방식이 다 달라서(schedules는 id 컬럼, drivers/users는
+# 이름) 하나의 범용 로직으로 억지로 묶는 것보다 훨씬 안전함.
+AUDIT_LOG_SHEET = "audit_log"
+AUDIT_LOG_HEADERS = ['id', 'timestamp', 'username', 'action', 'summary', 'before', 'after', 'rolled_back']
+AUDIT_LOG_RETENTION_DAYS = 30
+
+def _get_or_create_ws(sheet_name, headers):
+    sh = get_db_connection()
+    try:
+        ws = sh.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=sheet_name, rows=2000, cols=len(headers))
+        ws.append_row(headers)
+    return ws
+
+# [추가] 작업 로그가 계속 쌓이면 조회가 느려지므로, 오래된 기록을 정리함.
+# 서버에 상시 실행되는 스케줄러가 없는 구조(요청 올 때만 깨어남)라서, 대신
+# st.cache_resource(ttl=86400)로 "하루에 한 번만 실제로 실행"되게 함 - 여러 세션/사용자가
+# 계속 호출해도 캐시가 안 끝난 동안은 그냥 캐시된 값만 반환하고 실제 정리는 스킵됨.
+def _cleanup_old_audit_log():
+    try:
+        ws = _get_or_create_ws(AUDIT_LOG_SHEET, AUDIT_LOG_HEADERS)
+        all_values = ws.get_all_values()
+        if len(all_values) <= 1:
+            return
+        headers = all_values[0]
+        ts_idx = headers.index('timestamp') if 'timestamp' in headers else 1
+        cutoff = get_kst_now() - timedelta(days=AUDIT_LOG_RETENTION_DAYS)
+        kept_rows = []
+        removed = 0
+        for row in all_values[1:]:
+            keep = True
+            if len(row) > ts_idx and row[ts_idx]:
+                try:
+                    if datetime.strptime(row[ts_idx], "%Y-%m-%d %H:%M:%S") < cutoff:
+                        keep = False
+                except ValueError:
+                    pass
+            if keep:
+                kept_rows.append(row)
+            else:
+                removed += 1
+        if removed == 0:
+            return
+        ws.clear()
+        all_new = [headers] + kept_rows
+        try:
+            ws.update(values=all_new, range_name="A1", value_input_option='USER_ENTERED')
+        except TypeError:
+            ws.update("A1", all_new, value_input_option='USER_ENTERED')
+        clear_cache_after_save(AUDIT_LOG_SHEET)
+    except Exception:
+        pass
+
+@st.cache_resource(ttl=86400)
+def _audit_log_cleanup_gate():
+    _cleanup_old_audit_log()
+    return True
+
+def record_audit(action, summary, before=None, after=None):
+    # 감사 로그 기록 자체가 실패해도 실제 작업(저장/삭제)까지 막으면 안 되므로 조용히 넘어감
+    try:
+        _audit_log_cleanup_gate()
+        ws = _get_or_create_ws(AUDIT_LOG_SHEET, AUDIT_LOG_HEADERS)
+        entry_id = get_kst_now().strftime("%y%m%d%H%M%S%f")[:-3]
+        username = st.session_state.get('user_name', '') or st.session_state.get('auth_status', 'unknown')
+        row = [
+            entry_id, get_kst_now().strftime("%Y-%m-%d %H:%M:%S"), username, action, summary,
+            json.dumps(before, ensure_ascii=False) if before is not None else "",
+            json.dumps(after, ensure_ascii=False) if after is not None else "",
+            ""
+        ]
+        ws.append_row(row, value_input_option='USER_ENTERED')
+        clear_cache_after_save(AUDIT_LOG_SHEET)
+        return entry_id
+    except Exception:
+        return None
+
+def get_audit_log():
+    _audit_log_cleanup_gate()
+    return load_data(AUDIT_LOG_SHEET)
+
+# [추가] 감사 로그가 대부분 승무원+일정에 대한 기록이라, before/after에 저장해둔 원본
+# 행 데이터에서 승무원 이름/일자를 뽑아 로그 목록에 별도 컬럼으로 보여주기 위함.
+def summarize_audit_entry(before_json, after_json):
+    try:
+        rows = json.loads(after_json) if after_json else (json.loads(before_json) if before_json else [])
+    except (json.JSONDecodeError, TypeError):
+        rows = []
+    if not rows:
+        return "-", "-"
+    names, dates = [], []
+    for r in rows:
+        n = r.get('name')
+        d = r.get('date')
+        if n and n not in names: names.append(n)
+        if d and d not in dates: dates.append(d)
+    dates.sort()
+    if not names:
+        name_disp = "-"
+    elif len(names) == 1:
+        name_disp = names[0]
+    else:
+        name_disp = f"{names[0]} 외 {len(names) - 1}명"
+    if not dates:
+        date_disp = "-"
+    elif len(dates) == 1:
+        date_disp = dates[0]
+    else:
+        date_disp = f"{dates[0]} ~ {dates[-1]}"
+    return name_disp, date_disp
+
+def _mark_rolled_back(entry_id):
+    try:
+        ws = _get_or_create_ws(AUDIT_LOG_SHEET, AUDIT_LOG_HEADERS)
+        col_values = ws.col_values(1)
+        row_idx = col_values.index(entry_id) + 1
+        ws.update_cell(row_idx, AUDIT_LOG_HEADERS.index('rolled_back') + 1, "Y")
+        clear_cache_after_save(AUDIT_LOG_SHEET)
+    except (ValueError, gspread.exceptions.WorksheetNotFound):
+        pass
+
+def rollback_audit_entry(entry_id):
+    df = get_audit_log()
+    if df.empty or 'id' not in df.columns:
+        return False, "감사 로그가 없습니다."
+    match = df[df['id'] == entry_id]
+    if match.empty:
+        return False, "해당 기록을 찾을 수 없습니다."
+    entry = match.iloc[0]
+    if str(entry.get('rolled_back', '')).strip().upper() == 'Y':
+        return False, "이미 롤백된 작업입니다."
+
+    action = entry['action']
+    before = json.loads(entry['before']) if entry.get('before') else None
+    after = json.loads(entry['after']) if entry.get('after') else None
+
+    try:
+        if action == 'schedule_create':
+            delete_rows_by_ids("schedules", [r['id'] for r in after], _skip_audit=True)
+        elif action == 'schedule_delete':
+            _restore_rows("schedules", before)
+        elif action == 'schedule_update':
+            _overwrite_row("schedules", before[0])
+        elif action == 'event_create':
+            delete_rows_by_ids("company_events", [r['id'] for r in after], _skip_audit=True)
+        elif action == 'driver_create':
+            delete_driver(after[0]['id'], _skip_audit=True)
+        elif action == 'driver_resign':
+            set_driver_resignation(before[0]['id'], before[0].get('resigned_date', ''), _skip_audit=True)
+        elif action == 'driver_delete':
+            _restore_driver_full(before)
+        elif action == 'user_create':
+            delete_user_account(after[0]['username'], _skip_audit=True)
+        elif action == 'user_delete':
+            _restore_rows("users", before)
+        else:
+            return False, "이 작업 유형은 롤백을 지원하지 않습니다."
+    except Exception as e:
+        return False, f"롤백 실패: {e}"
+
+    _mark_rolled_back(entry_id)
+    record_audit("rollback", f"[{entry_id}] {entry.get('summary','')} 롤백")
+    return True, "롤백되었습니다."
+
+def _restore_rows(sheet_name, rows):
+    if not rows: return
+    sh = get_db_connection()
+    ws = sh.worksheet(sheet_name)
+    headers = ws.row_values(1)
+    values = [[r.get(h, "") for h in headers] for r in rows]
+    ws.append_rows(values, value_input_option='USER_ENTERED')
+    clear_cache_after_save(sheet_name)
+
+def _overwrite_row(sheet_name, row_dict):
+    if not row_dict: return
+    sh = get_db_connection()
+    ws = sh.worksheet(sheet_name)
+    headers = ws.row_values(1)
+    col_values = ws.col_values(1)
+    try:
+        row_idx = col_values.index(str(row_dict.get(headers[0], ''))) + 1
+    except ValueError:
+        return
+    values = [row_dict.get(h, "") for h in headers]
+    ws.update(values=[values], range_name=f"A{row_idx}")
+    clear_cache_after_save(sheet_name)
+
+def _restore_driver_full(before_rows):
+    # before_rows: delete_driver 롤백용. drivers 시트 1행 + group_history/schedules 여러 행이
+    # 섞여서 들어옴(각 행에 __sheet 키로 원래 시트 이름을 같이 저장해둠 - delete_driver 참고)
+    by_sheet = {}
+    for r in before_rows:
+        sheet = r.get('__sheet')
+        row = {k: v for k, v in r.items() if k != '__sheet'}
+        by_sheet.setdefault(sheet, []).append(row)
+    for sheet_name, rows in by_sheet.items():
+        _restore_rows(sheet_name, rows)
+
+# ==========================================
 # 3. 데이터 저장 (절대 좌표 강제)
 # ==========================================
+# [추가] 휴무 등록 시 오타 등으로 실제 등록 안 된 승무원 이름이 그대로 저장되는 걸 막기 위한 검증.
+# schedules에 이름만 잘못 들어가면 개인현황(등록된 승무원만 목록에 뜸)에서 찾을 방법이 없어져서
+# 저장 전에 미리 걸러내야 함.
+def validate_driver_names(name_list):
+    drivers_df = load_data("drivers")
+    valid_names = set(drivers_df['name'].astype(str).str.strip()) if not drivers_df.empty else set()
+    return [n for n in name_list if n not in valid_names]
+
+# [추가] 같은 사람이 같은 날짜에 이미 휴무 등록이 되어있는데 또 등록되는 걸 막기 위한 검증.
+# (겹치는 (이름, 날짜) 목록을 반환 - 비어있으면 중복 없음)
+def check_duplicate_schedule(name_list, start, end):
+    df = load_data("schedules")
+    if df.empty:
+        return []
+    dates = pd.date_range(start, end)
+    date_strs = set(d.strftime("%Y-%m-%d") for d in dates)
+    name_set = set(name_list)
+    dup_df = df[df['name'].isin(name_set) & df['date'].astype(str).isin(date_strs)]
+    return [(row['name'], row['date']) for _, row in dup_df.iterrows()]
+
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
@@ -168,6 +543,9 @@ def save_range_batch(name_list, start, end, type, shift, note):
         ws = sh.worksheet("schedules")
         ws.append_rows(rows_to_add, value_input_option='USER_ENTERED')
         clear_cache_after_save("schedules")
+        headers = ['id', 'name', 'date', 'type', 'note', 'created_at', 'shift']
+        after_rows = [dict(zip(headers, r)) for r in rows_to_add]
+        record_audit("schedule_create", f"{len(name_list)}명 일정 등록 ({type})", after=after_rows)
     return len(rows_to_add), generated_ids
 
 def add_company_event(date, title):
@@ -179,27 +557,21 @@ def add_company_event(date, title):
     data = [[str(row_id), str(date), str(title), str(created_at)]]
     ws.append_rows(data, value_input_option='USER_ENTERED')
     clear_cache_after_save("company_events")
+    record_audit("event_create", f"행사 등록: {title}",
+                  after=[{'id': row_id, 'date': str(date), 'title': str(title), 'created_at': created_at}])
     return row_id
 
-def add_log(msg, ids=None, sheet_name=None, level="INFO"):
-    timestamp = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    log_entry = {
-        "time": timestamp,
-        "msg": msg,
-        "level": level,
-        "ids": ids if ids else [],
-        "sheet": sheet_name,
-        "status": "active"
-    }
-    if 'action_logs' not in st.session_state:
-        st.session_state['action_logs'] = []
-    st.session_state['action_logs'].insert(0, log_entry)
-
-def delete_rows_by_ids(sheet_name, id_list):
+def delete_rows_by_ids(sheet_name, id_list, _skip_audit=False):
     if not id_list: return False
     sh = get_db_connection()
     ws = sh.worksheet(sheet_name)
-    col_values = ws.col_values(1) 
+    all_values = ws.get_all_values()
+    if not all_values: return False
+    headers = all_values[0]
+    col_values = [row[0] if row else "" for row in all_values]
+    id_set = set(str(i) for i in id_list)
+    before_rows = [dict(zip(headers, row)) for row in all_values[1:] if row and row[0] in id_set]
+
     rows_to_delete = []
     for target_id in id_list:
         try:
@@ -210,6 +582,36 @@ def delete_rows_by_ids(sheet_name, id_list):
     for r_idx in rows_to_delete:
         ws.delete_rows(r_idx)
     clear_cache_after_save(sheet_name)
+    if not _skip_audit and before_rows:
+        action = "schedule_delete" if sheet_name == "schedules" else f"{sheet_name}_rows_delete"
+        record_audit(action, f"{sheet_name} {len(before_rows)}건 삭제", before=before_rows)
+    return True
+
+# [추가] 휴무 현황 > 개인 현황 목록에서 일정 항목 수정용.
+# schedules 시트 컬럼 순서: id(A), name(B), date(C), type(D), note(E), created_at(F), shift(G)
+def update_schedule_event(row_id, date_str, type_str, shift, note, _skip_audit=False):
+    sh = get_db_connection()
+    ws = sh.worksheet("schedules")
+    all_values = ws.get_all_values()
+    if not all_values: return False
+    headers = all_values[0]
+    col_values = [row[0] if row else "" for row in all_values]
+    try:
+        row_idx = col_values.index(str(row_id)) + 1
+    except ValueError:
+        return False
+    before_row = dict(zip(headers, all_values[row_idx - 1]))
+
+    ws.update_cell(row_idx, 3, str(date_str))
+    ws.update_cell(row_idx, 4, str(type_str))
+    ws.update_cell(row_idx, 5, str(note))
+    ws.update_cell(row_idx, 7, str(shift))
+    clear_cache_after_save("schedules")
+
+    if not _skip_audit:
+        after_row = dict(before_row)
+        after_row.update({'date': str(date_str), 'type': str(type_str), 'note': str(note), 'shift': str(shift)})
+        record_audit("schedule_update", f"{before_row.get('name','')} 일정 수정", before=[before_row], after=[after_row])
     return True
 
 WORK_HISTORY_REQUIRED_COLS = ['date', 'name', 'shift', 'route', 'seq', 'car', 'is_sub', 'orig_fix', 'updated_at']
@@ -295,48 +697,157 @@ def migrate_old_work_history():
     ws_old.update_title(f"work_history_migrated_{get_kst_now().strftime('%Y%m%d_%H%M%S')}")
     return {"status": "done", "count": saved}
 
+def _new_driver_id():
+    return get_kst_now().strftime("%y%m%d%H%M%S")
+
+def _row_from_headers(headers, values_dict):
+    return [str(values_dict.get(h, "")) for h in headers]
+
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
+    # [수정] id 컬럼에 항상 빈 문자열("")을 넣고 있어서 신규 등록자에게 id가 안 붙던 버그.
+    # 컬럼 위치도 고정하지 않고 헤더 이름 기준으로 값을 채움(퇴사처리 버그와 같은 이유).
     sh = get_db_connection()
     ws_drivers = sh.worksheet("drivers")
     created_at = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+    driver_id = _new_driver_id()
     try:
         existing = ws_drivers.find(name)
         if not existing:
-            ws_drivers.append_row(["", name, group_name, created_at, ""])
+            headers = ws_drivers.row_values(1)
+            row = _row_from_headers(headers, {
+                'id': driver_id, 'name': name, 'group_name': group_name,
+                'created_at': created_at, 'resigned_date': ''
+            })
+            ws_drivers.append_row(row)
     except: pass
     ws_history = sh.worksheet("group_history")
     ws_history.append_row(["", name, group_name, start_date, created_at])
     clear_cache_after_save(["drivers", "group_history"])
+    record_audit("driver_create", f"승무원 등록: {name} ({group_name})",
+                  after=[{'id': driver_id, 'name': name, 'group_name': group_name, 'start_date': start_date}])
     return True
 
-def set_driver_resignation(name, r_date):
+# [추가] id 컬럼이 비어있던 예전 등록자들에게 id를 일괄로 부여함 (로그 탭 마이그레이션에서 사용)
+def backfill_driver_ids():
+    sh = get_db_connection()
+    ws = sh.worksheet("drivers")
+    all_values = ws.get_all_values()
+    if len(all_values) <= 1:
+        return 0
+    headers = all_values[0]
+    try:
+        id_col = headers.index('id')
+    except ValueError:
+        return 0
+    updated = 0
+    for i, row in enumerate(all_values[1:], start=2):
+        cur_id = row[id_col].strip() if len(row) > id_col else ""
+        if not cur_id:
+            ws.update_cell(i, id_col + 1, f"{_new_driver_id()}{updated:02d}")
+            updated += 1
+    if updated:
+        clear_cache_after_save("drivers")
+    return updated
+
+def set_driver_resignation(driver_id, r_date, _skip_audit=False):
+    # [수정] 이름으로 찾으면 (1) 컬럼 위치가 밀려있거나 (2) 동명이인/중복 등록이 있을 때
+    # 엉뚱한 행을 건드리거나 일부만 처리되는 문제가 있었음. id는 유일하므로 id로 찾도록 바꿈.
+    # (컬럼 위치도 헤더 이름 기준으로 찾아서, 실제 시트 구조가 뭐든 안전함)
     sh = get_db_connection()
     ws = sh.worksheet("drivers")
     try:
-        cell = ws.find(name)
-        if cell:
-            ws.update_cell(cell.row, 5, r_date)
-            clear_cache_after_save("drivers")
-    except: pass
+        all_values = ws.get_all_values()
+    except Exception as e:
+        return False, f"시트 조회 실패: {e}"
+    if not all_values:
+        return False, "승무원 시트가 비어있습니다."
 
-def delete_driver(driver_name):
+    headers = all_values[0]
+    try:
+        id_col = headers.index('id')
+        name_col = headers.index('name')
+        resign_col = headers.index('resigned_date')
+    except ValueError:
+        return False, f"시트 헤더에 id/name/resigned_date 컬럼이 없습니다 (헤더: {headers})."
+
+    row_idx, matched_row = None, None
+    for i, row in enumerate(all_values[1:], start=2):
+        if len(row) > id_col and row[id_col].strip() == str(driver_id).strip():
+            row_idx, matched_row = i, row
+            break
+    if row_idx is None:
+        return False, f"id '{driver_id}'에 해당하는 승무원을 찾을 수 없습니다."
+
+    name = matched_row[name_col].strip() if len(matched_row) > name_col else ""
+    before_val = matched_row[resign_col].strip() if len(matched_row) > resign_col else ""
+
+    try:
+        ws.update_cell(row_idx, resign_col + 1, r_date)
+    except Exception as e:
+        return False, f"업데이트 실패: {e}"
+
+    clear_cache_after_save("drivers")
+    if not _skip_audit:
+        record_audit("driver_resign", f"{name} 퇴사일 설정: {r_date}",
+                      before=[{'id': driver_id, 'name': name, 'resigned_date': before_val}],
+                      after=[{'id': driver_id, 'name': name, 'resigned_date': r_date}])
+    return True, "완료"
+
+def delete_driver(driver_id, _skip_audit=False):
+    # [수정] 이름 기준 삭제 -> id 기준 삭제로 변경 (drivers 시트는 id로 정확히 하나만 특정).
+    # group_history/schedules는 승무원 id를 안 갖고 있어서(이름만 있음) 이 두 시트는 여전히
+    # drivers에서 찾은 이름으로 매칭함 - 대신 get_all_values()로 시트당 한 번만 읽어서
+    # find/findall + row_values를 행 개수만큼 부르던 예전 방식보다 훨씬 안전/효율적임.
     sh = get_db_connection()
+    before_rows = []
+
     ws_d = sh.worksheet("drivers")
+    driver_name = None
     try:
-        cell = ws_d.find(driver_name)
-        if cell: ws_d.delete_rows(cell.row)
-    except: pass
-    ws_h = sh.worksheet("group_history")
-    try:
-        cells = ws_h.findall(driver_name)
-        for cell in reversed(cells): ws_h.delete_rows(cell.row)
-    except: pass
-    ws_s = sh.worksheet("schedules")
-    try:
-        cells = ws_s.findall(driver_name)
-        for cell in reversed(cells): ws_s.delete_rows(cell.row)
-    except: pass
+        all_values = ws_d.get_all_values()
+        if all_values:
+            headers = all_values[0]
+            id_col = headers.index('id') if 'id' in headers else 0
+            name_col = headers.index('name') if 'name' in headers else 1
+            for idx, row in enumerate(all_values[1:], start=2):
+                if len(row) > id_col and row[id_col].strip() == str(driver_id).strip():
+                    driver_name = row[name_col].strip() if len(row) > name_col else None
+                    row_dict = dict(zip(headers, row))
+                    row_dict['__sheet'] = 'drivers'
+                    before_rows.append(row_dict)
+                    ws_d.delete_rows(idx)
+                    break
+    except Exception:
+        pass
+
+    if driver_name is None:
+        return False, f"id '{driver_id}'에 해당하는 승무원을 찾을 수 없습니다."
+
+    def _capture_and_delete(ws, sheet_tag):
+        try:
+            all_values = ws.get_all_values()
+            if not all_values: return
+            headers = all_values[0]
+            matches = []
+            for idx, row in enumerate(all_values[1:], start=2):
+                if driver_name in row:
+                    row_dict = dict(zip(headers, row))
+                    row_dict['__sheet'] = sheet_tag
+                    matches.append((idx, row_dict))
+            for _, row_dict in matches:
+                before_rows.append(row_dict)
+            for idx, _ in sorted(matches, key=lambda x: x[0], reverse=True):
+                ws.delete_rows(idx)
+        except Exception:
+            pass
+
+    _capture_and_delete(sh.worksheet("group_history"), 'group_history')
+    _capture_and_delete(sh.worksheet("schedules"), 'schedules')
+
     clear_cache_after_save(["drivers", "group_history", "schedules"])
+    if not _skip_audit and before_rows:
+        record_audit("driver_delete", f"승무원 삭제: {driver_name}", before=before_rows)
+    return True, f"'{driver_name}' 삭제 완료"
 
 def add_user_account(username, password, role, name):
     sh = get_db_connection()
@@ -345,16 +856,27 @@ def add_user_account(username, password, role, name):
     new_row = [username, make_hash(password), role, name, k_date]
     ws.append_row(new_row)
     clear_cache_after_save("users")
+    record_audit("user_create", f"계정 생성: {username} ({name})",
+                  after=[{'username': username, 'password': new_row[1], 'role': role, 'name': name, 'created_at': k_date}])
     return True
 
-def delete_user_account(username):
+def delete_user_account(username, _skip_audit=False):
     sh = get_db_connection()
     ws = sh.worksheet("users")
     try:
         cell = ws.find(username)
         if cell:
+            # [중요] 감사 로그용 이전 값 읽기 실패가 실제 삭제까지 막으면 안 되므로 별도로 감쌈
+            before_row = {}
+            try:
+                headers = ws.row_values(1)
+                before_row = dict(zip(headers, ws.row_values(cell.row)))
+            except Exception:
+                pass
             ws.delete_rows(cell.row)
             clear_cache_after_save("users")
+            if not _skip_audit:
+                record_audit("user_delete", f"계정 삭제: {username}", before=[before_row] if before_row else None)
     except: pass
 
 def update_user_password(username, new_password):
@@ -365,6 +887,7 @@ def update_user_password(username, new_password):
         if cell:
             ws.update_cell(cell.row, 2, make_hash(new_password))
             clear_cache_after_save("users")
+            record_audit("user_password_update", f"{username} 비밀번호 변경")
             return True
     except: pass
     return False

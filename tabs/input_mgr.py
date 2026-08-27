@@ -27,19 +27,26 @@ def render_quick_input_content(modal_slot=None):
         if st.button("승무원 일정 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
                 lst = [n.strip() for n in names_str.replace(',', '\n').split('\n') if n.strip()]
-                try:
-                    with st.spinner('저장 중...'):
-                        count, ids = utils.save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                invalid = utils.validate_driver_names(lst)
+                dup = utils.check_duplicate_schedule(lst, rng[0], rng[-1]) if not invalid else []
+                if invalid:
+                    st.error(f"🚨 등록되지 않은 승무원입니다: {', '.join(invalid)}")
+                elif dup:
+                    dup_txt = ', '.join(f"{n}({d})" for n, d in dup)
+                    st.error(f"🚨 이미 등록된 휴무입니다: {dup_txt}")
+                else:
+                    try:
+                        with st.spinner('저장 중...'):
+                            count, ids = utils.save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
 
-                    st.toast("✅ 저장 완료!", icon="🔄")
-                    utils.add_log(f"입력 성공: {len(lst)}명", ids=ids, sheet_name="schedules")
-                    st.session_state['show_quick_input'] = False
-                    # [변경] 전체 새로고침(로딩 화면)이 뜨기 전에 모달부터 먼저 닫음
-                    if modal_slot: modal_slot.empty()
-                    # [최적화] 전체 앱이 아니라 이 탭(fragment)만 다시 그림
-                    st.rerun(scope="fragment")
-                except Exception as e:
-                    st.error(f"🚨 저장 중 오류 발생: {e}")
+                        st.toast("✅ 저장 완료!", icon="🔄")
+                        st.session_state['show_quick_input'] = False
+                        # [변경] 전체 새로고침(로딩 화면)이 뜨기 전에 모달부터 먼저 닫음
+                        if modal_slot: modal_slot.empty()
+                        # [최적화] 전체 앱이 아니라 이 탭(fragment)만 다시 그림
+                        st.rerun(scope="fragment")
+                    except Exception as e:
+                        st.error(f"🚨 저장 중 오류 발생: {e}")
             else:
                 st.warning("이름과 기간을 입력해주세요.")
 
@@ -58,7 +65,6 @@ def render_quick_input_content(modal_slot=None):
                             utils.add_company_event(d.strftime("%Y-%m-%d"), et)
 
                     st.toast("✅ 행사 저장 완료!", icon="🔄")
-                    utils.add_log(f"행사 등록: {et}", sheet_name="company_events")
                     st.session_state['show_quick_input'] = False
                     # [변경] 전체 새로고침(로딩 화면)이 뜨기 전에 모달부터 먼저 닫음
                     if modal_slot: modal_slot.empty()
@@ -73,7 +79,6 @@ def render_quick_input_content(modal_slot=None):
 # 2. 메인 입력 탭 렌더링 함수
 # ==========================================
 def render_input_tab():
-    st.subheader("📝 관리자 입력 & 배차 관리")
     t1, t2, t3, t4 = st.tabs(["휴무 등록", "행사 등록", "📂 배차일지 업로드", "⚙️ 감차 규칙"])
     
     # --- 1. 휴무 등록 ---
@@ -90,13 +95,21 @@ def render_input_tab():
         st.markdown('<div class="red-button">', unsafe_allow_html=True)
         if st.button("일괄 저장", type="primary", use_container_width=True):
             if names_str and len(rng) > 0:
-                try:
-                    with st.spinner('저장...'):
-                        lst = [n.strip() for n in names_str.split('\n') if n.strip()]
-                        utils.save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
-                    st.success("완료")
-                    st.rerun()
-                except: st.error("오류")
+                lst = [n.strip() for n in names_str.split('\n') if n.strip()]
+                invalid = utils.validate_driver_names(lst)
+                dup = utils.check_duplicate_schedule(lst, rng[0], rng[-1]) if not invalid else []
+                if invalid:
+                    st.error(f"🚨 등록되지 않은 승무원입니다: {', '.join(invalid)}")
+                elif dup:
+                    dup_txt = ', '.join(f"{n}({d})" for n, d in dup)
+                    st.error(f"🚨 이미 등록된 휴무입니다: {dup_txt}")
+                else:
+                    try:
+                        with st.spinner('저장...'):
+                            utils.save_range_batch(lst, rng[0], rng[-1], typ, sft, nte)
+                        st.success("완료")
+                        st.rerun()
+                    except: st.error("오류")
     
     # --- 2. 행사 등록 ---
     with t2:

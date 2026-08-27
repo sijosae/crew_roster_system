@@ -3,8 +3,6 @@ import pandas as pd
 import utils
 
 def render_driver_manage_tab():
-    st.subheader("⚙️ 승무원 및 조(Group) 관리")
-    
     # [복구] 4개 탭 구조 완벽 복원
     tab_bulk, tab_change, tab_resign, tab_users = st.tabs(["➕ 승무원 등록", "🔄 조 변경", "👋 퇴사 처리", "🔐 관리자 계정"])
     
@@ -77,37 +75,56 @@ def render_driver_manage_tab():
     # 3. 퇴사 처리 (복구 + 삭제 버튼 추가)
     # ----------------------------------------------------
     with tab_resign:
+        # [수정] 이름 대신 id로 처리하도록 변경 (동명이인/컬럼밀림 등으로 이름 매칭이 실패하던
+        # 문제를 근본적으로 없앰). 화면엔 이름을 보여주되, 실제로 넘기는 값은 id.
         drivers = utils.load_data("drivers")
-        # 이미 퇴사 처리된 사람도 목록에는 띄우되 구분 가능하게
-        if not drivers.empty:
-            active_list = drivers['name'].tolist()
-            active_list.sort()
-        else:
-            active_list = []
+        driver_options, no_id_count = [], 0
+        if not drivers.empty and 'id' in drivers.columns:
+            drivers_sorted = drivers.sort_values(by='name')
+            for _, row in drivers_sorted.iterrows():
+                did = str(row['id']).strip()
+                if did:
+                    driver_options.append((did, row['name']))
+                else:
+                    no_id_count += 1
 
-        if active_list:
+        if driver_options:
+            if no_id_count:
+                st.warning(f"⚠️ id가 없는 승무원 {no_id_count}명은 아래 목록에서 빠져있습니다. "
+                           "'🔧 로그 → 🔄 마이그레이션'에서 id를 부여해주세요.")
             st.write("승무원을 퇴사 처리하거나 데이터를 삭제합니다.")
             c_r1, c_r2 = st.columns(2)
-            
-            with c_r1: 
-                r_target = st.selectbox("대상 승무원 선택", active_list, key="resign_dr")
+
+            with c_r1:
+                r_target_id, r_target_name = st.selectbox(
+                    "대상 승무원 선택", driver_options, format_func=lambda x: x[1], key="resign_dr"
+                )
                 r_date = st.date_input("퇴사 일자", utils.get_kst_now().date(), key="resign_date")
-                
+
                 if st.button("👋 퇴사 처리 (재직상태 변경)", type="primary", key="btn_resign", use_container_width=True):
-                    utils.set_driver_resignation(r_target, r_date.strftime("%Y-%m-%d"))
-                    st.success(f"{r_target}님 퇴사 처리 완료")
-                    st.rerun()
+                    ok, msg = utils.set_driver_resignation(r_target_id, r_date.strftime("%Y-%m-%d"))
+                    if ok:
+                        # [참고] st.rerun() 직전엔 일반 메시지가 화면에 그려지기도 전에 사라지므로,
+                        # 새로고침 이후에도 남는 st.toast로 띄움
+                        st.toast(f"✅ {r_target_name}님 퇴사 처리: {msg}", icon="🔄")
+                        st.rerun()
+                    else:
+                        st.error(f"🚨 퇴사 처리 실패: {msg}")
 
             with c_r2:
                 st.write("⚠️ **데이터 완전 삭제**")
                 st.caption("근무 기록과 조 배정 이력이 모두 삭제됩니다.")
                 st.markdown('<div class="red-button">', unsafe_allow_html=True)
                 if st.button("🗑️ 영구 삭제 (복구 불가)", key="btn_delete_dr", use_container_width=True):
-                    utils.delete_driver(r_target)
-                    st.error(f"{r_target}님 데이터 삭제 완료")
-                    st.rerun()
+                    ok, msg = utils.delete_driver(r_target_id)
+                    if ok:
+                        st.error(msg)
+                        st.rerun()
+                    else:
+                        st.warning(msg)
                 st.markdown('</div>', unsafe_allow_html=True)
-        else: st.info("등록된 승무원이 없습니다.")
+        else:
+            st.info("등록된 승무원이 없습니다 (또는 전부 id가 비어있어 마이그레이션이 필요합니다).")
 
     # ----------------------------------------------------
     # 4. 관리자 계정 (완벽 복구)

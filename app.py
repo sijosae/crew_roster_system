@@ -46,9 +46,11 @@ def main():
                         st.session_state['auth_status'] = user[0]
                         st.session_state['user_name'] = user[1]
                         st.session_state['_pending_login_log'] = uid
-                        new_token = utils.make_session_token(uid, user[0], user[1])
-                        cookie_manager.set("auth", new_token, key="set_auth_cookie",
-                                            max_age=utils.SESSION_MAX_AGE_DAYS * 86400)
+                        # [수정] 여기서 바로 cookie_manager.set()을 부르면 이 컴포넌트가
+                        # login_area 컨테이너 안에 그려지는데, 바로 아래서 login_area.empty()로
+                        # 그 영역을 지워버려서 브라우저가 쿠키를 실제로 심기(mount) 전에 사라짐.
+                        # 그래서 실행은 login_area.empty() 이후로 미루고 토큰만 세션에 담아둠.
+                        st.session_state['_pending_cookie_token'] = utils.make_session_token(uid, user[0], user[1])
 
                         # [핵심 수정] 로그인 성공 시 기존 날짜 정보 초기화 -> 오늘 날짜로 재설정됨
                         keys_to_clear = [
@@ -66,11 +68,25 @@ def main():
 
     login_area.empty()
 
+    # login_area가 지워진 뒤(=실제로 화면에 남는 영역)에 쿠키를 심어야 브라우저가 놓치지 않음
+    pending_token = st.session_state.pop('_pending_cookie_token', None)
+    if pending_token:
+        cookie_manager.set("auth", pending_token, key="set_auth_cookie",
+                            max_age=utils.SESSION_MAX_AGE_DAYS * 86400)
+
     # 메인 화면
-    c_head1, c_head2 = st.columns([8, 1])
-    with c_head1: st.title(f"우진교통 배차 관리 시스템 ({st.session_state.get('user_name')}님)")
+    c_head1, c_head2 = st.columns([9, 1.4])
+    with c_head1:
+        st.image("copyright_woojin.png", width=90)
     with c_head2:
-        if st.button("로그아웃"):
+        c_name, c_btn = st.columns([1.2, 1])
+        with c_name:
+            st.markdown(
+                f"<div style='text-align:right; padding-top:9px; white-space:nowrap; font-weight:bold;'>{st.session_state.get('user_name')}님</div>",
+                unsafe_allow_html=True)
+        with c_btn:
+            logout_clicked = st.button("로그아웃", use_container_width=True)
+        if logout_clicked:
             st.session_state['auth_status'] = None
             old_token = cookie_manager.get("auth")
             if old_token:
@@ -95,7 +111,7 @@ def main():
             utils.log_login_access(pending_uid, st.session_state.get('user_name'))
 
         if st.session_state['auth_status'] == 'admin':
-            t1, t2, t3, t4, t5, t6 = st.tabs(["📅 전체 현황", "👤 개인별", "📝 입력/배차", "⚙️ 승무원", "📊 조회", "🔧 로그"])
+            t1, t2, t3, t4, t5, t6 = st.tabs(["📅 휴무 현황", "👤 근무 현황", "📝 입력/배차", "⚙️ 승무원", "📊 조회", "🔧 로그"])
             with t1: total_status.render_calendar_tab(input_mgr.render_quick_input_content)
             with t2: individual.render_individual_calendar_tab()
             with t3: input_mgr.render_input_tab()
@@ -103,7 +119,7 @@ def main():
             with t5: search.render_view_manage_tab()
             with t6: logs.render_log_tab()
         else:
-            t1, t2, t3 = st.tabs(["📅 전체 현황", "👤 개인별", "📊 조회"])
+            t1, t2, t3 = st.tabs(["📅 휴무 현황", "👤 근무 현황", "📊 조회"])
             with t1: total_status.render_calendar_tab(None)
             with t2: individual.render_individual_calendar_tab()
             with t3: search.render_public_search_tab()

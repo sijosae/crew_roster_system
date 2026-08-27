@@ -15,7 +15,7 @@ def _render_quick_input_button(input_func):
     if 'show_quick_input' not in st.session_state:
         st.session_state['show_quick_input'] = False
 
-    if st.button("➕ 빠른 입력", type="primary", use_container_width=True):
+    if st.button("➕ 휴무입력", type="primary", use_container_width=True):
         st.session_state['show_quick_input'] = not st.session_state['show_quick_input']
 
     if st.session_state['show_quick_input']:
@@ -59,24 +59,6 @@ def _render_quick_input_button(input_func):
                     input_func(modal_slot)
                 else:
                     st.warning("입력 기능 로드 실패")
-
-def prev_cal_callback():
-    if st.session_state.view_month == 1:
-        st.session_state.view_year -= 1
-        st.session_state.view_month = 12
-    else:
-        st.session_state.view_month -= 1
-    st.session_state.sb_view_year = st.session_state.view_year
-    st.session_state.sb_view_month = st.session_state.view_month
-
-def next_cal_callback():
-    if st.session_state.view_month == 12:
-        st.session_state.view_year += 1
-        st.session_state.view_month = 1
-    else:
-        st.session_state.view_month += 1
-    st.session_state.sb_view_year = st.session_state.view_year
-    st.session_state.sb_view_month = st.session_state.view_month
 
 def get_stats_optimized(date_str, drivers_list, today_schedules_records, history_dict):
     # [최적화] drivers_list/today_schedules_records는 렌더링 시작 시 한 번만 만든 일반 파이썬
@@ -176,6 +158,222 @@ def calculate_layout_rows(df_month):
     max_row = max(lanes.keys()) + 1 if lanes else 0
     return layout_map, max_row
 
+SCHEDULE_TYPE_OPTIONS = ["휴무", "교육", "경조사", "병가", "휴직", "징계", "당일 해지", "기타"]
+SCHEDULE_SHIFT_OPTIONS = ["자동", "오전", "오후", "휴무", "기타"]
+
+# [추가] 개인 현황 목록에서 "수정" 눌렀을 때 뜨는 패널. session_state 기반 진짜 버튼이라
+# (달력 클릭 방식과 달리) 새로고침/로그인 화면 재로딩 없이 가볍게 동작함.
+def _render_edit_schedule_panel(df):
+    edit_id = st.session_state.get('edit_sched_id')
+    if not edit_id:
+        return
+    match = df[df['id'] == edit_id] if not df.empty and 'id' in df.columns else pd.DataFrame()
+    if match.empty:
+        st.session_state['edit_sched_id'] = None
+        return
+    row = match.iloc[0]
+
+    with st.container(border=True):
+        c_title, c_close = st.columns([5, 1])
+        with c_title: st.markdown(f"#### ✏️ 일정 수정 - {row['name']}")
+        with c_close:
+            if st.button("✕", key="edit_sched_close"):
+                st.session_state['edit_sched_id'] = None
+                st.rerun(scope="fragment")
+
+        new_date = st.date_input("날짜", value=pd.to_datetime(row['date']), key="edit_sched_date")
+        t_idx = SCHEDULE_TYPE_OPTIONS.index(row['type']) if row['type'] in SCHEDULE_TYPE_OPTIONS else 0
+        new_type = st.selectbox("구분", SCHEDULE_TYPE_OPTIONS, index=t_idx, key="edit_sched_type")
+        s_idx = SCHEDULE_SHIFT_OPTIONS.index(row['shift']) if row['shift'] in SCHEDULE_SHIFT_OPTIONS else 0
+        new_shift = st.selectbox("근무", SCHEDULE_SHIFT_OPTIONS, index=s_idx, key="edit_sched_shift")
+        new_note = st.text_input("비고", value=row['note'], key="edit_sched_note")
+
+        c_save, c_del = st.columns(2)
+        with c_save:
+            if st.button("💾 저장", type="primary", use_container_width=True, key="edit_sched_save"):
+                with st.spinner("저장 중..."):
+                    utils.update_schedule_event(edit_id, new_date.strftime("%Y-%m-%d"), new_type, new_shift, new_note)
+                st.session_state['edit_sched_id'] = None
+                st.toast("✅ 수정되었습니다", icon="🔄")
+                st.rerun(scope="fragment")
+        with c_del:
+            if st.button("🗑️ 삭제", use_container_width=True, key="edit_sched_delete"):
+                with st.spinner("삭제 중..."):
+                    utils.delete_rows_by_ids("schedules", [edit_id])
+                st.session_state['edit_sched_id'] = None
+                st.toast("🗑️ 삭제되었습니다", icon="🔄")
+                st.rerun(scope="fragment")
+
+# [추가] 연속된 날짜 + 같은 구분(type)의 일정을 하나의 묶음으로 그룹화.
+# 개인 현황 목록에서 "연결된 휴무 통째로 삭제" 기능에 씀.
+def _group_consecutive_leaves(df_sorted):
+    segments = []
+    recs = df_sorted.to_dict('records')
+    if not recs:
+        return segments
+    curr = [recs[0]]
+    for rec in recs[1:]:
+        prev = curr[-1]
+        prev_date = datetime.strptime(prev['date'], "%Y-%m-%d")
+        this_date = datetime.strptime(rec['date'], "%Y-%m-%d")
+        if rec['type'] == prev['type'] and (this_date - prev_date).days == 1:
+            curr.append(rec)
+        else:
+            segments.append(curr)
+            curr = [rec]
+    segments.append(curr)
+    return segments
+
+def _render_delete_confirm_box():
+    info = st.session_state.get('leave_delete_confirm')
+    if not info:
+        return
+    with st.container(border=True):
+        if len(info['ids']) <= 1:
+            st.warning(f"**{info['start']}** 휴무를 삭제하시겠습니까?")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("삭제", type="primary", use_container_width=True, key="confirm_del_single"):
+                    utils.delete_rows_by_ids("schedules", info['ids'])
+                    st.session_state['leave_delete_confirm'] = None
+                    st.toast("🗑️ 삭제되었습니다", icon="🔄")
+                    st.rerun(scope="fragment")
+            with c2:
+                if st.button("취소", use_container_width=True, key="cancel_del_single"):
+                    st.session_state['leave_delete_confirm'] = None
+                    st.rerun(scope="fragment")
+        else:
+            st.warning(f"연결된 휴무도 함께 삭제하시겠습니까? ( **{info['start']} ~ {info['end']}** )")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button("✅ 전체 삭제", type="primary", use_container_width=True, key="confirm_del_all"):
+                    utils.delete_rows_by_ids("schedules", info['ids'])
+                    st.session_state['leave_delete_confirm'] = None
+                    st.toast(f"🗑️ {info['start']} ~ {info['end']} 전체 삭제되었습니다", icon="🔄")
+                    st.rerun(scope="fragment")
+            with c2:
+                if st.button(f"이 날짜만 삭제 ({info['single_date']})", use_container_width=True, key="confirm_del_one"):
+                    utils.delete_rows_by_ids("schedules", [info['single_id']])
+                    st.session_state['leave_delete_confirm'] = None
+                    st.toast("🗑️ 삭제되었습니다", icon="🔄")
+                    st.rerun(scope="fragment")
+            with c3:
+                if st.button("취소", use_container_width=True, key="cancel_del_group"):
+                    st.session_state['leave_delete_confirm'] = None
+                    st.rerun(scope="fragment")
+
+# [추가] "개인 현황" 서브탭 - 승무원 한 명을 골라 그 달의 휴무를 목록으로 보고
+# 목록의 진짜 버튼으로 수정/삭제함 (달력 클릭 방식의 새로고침 문제를 완전히 피함)
+def _render_individual_leave_view():
+    is_admin = st.session_state.get('auth_status') == 'admin'
+    now = utils.get_kst_now()
+    if 'leave_view_year' not in st.session_state:
+        st.session_state.leave_view_year = now.year
+    if 'leave_view_month' not in st.session_state:
+        st.session_state.leave_view_month = now.month
+
+    drivers = utils.load_data("drivers")
+    if drivers.empty:
+        st.warning("등록된 승무원이 없습니다.")
+        return
+
+    df = utils.load_data("schedules")
+
+    # [추가] 휴무 입력 때 오타 등으로 등록 안 된 이름이 그대로 저장된 경우, 정상 승무원
+    # 목록에는 안 뜨니까 찾아서 지울 방법이 없었음 -> schedules에는 있는데 drivers엔 없는
+    # 이름을("이상등록자") 목록 맨 아래에 따로 표시해서 선택할 수 있게 함
+    ABNORMAL_SUFFIX = " (미등록)"
+    valid_names = set(drivers['name'].astype(str).str.strip())
+    abnormal_names = []
+    if not df.empty:
+        abnormal_names = sorted(set(df['name'].astype(str).str.strip()) - valid_names - {""})
+
+    PLACEHOLDER = "승무원을 선택하세요"
+    driver_options = [PLACEHOLDER] + sorted(drivers['name'].tolist())
+    if abnormal_names:
+        driver_options += [f"⚠️ {n}{ABNORMAL_SUFFIX}" for n in abnormal_names]
+
+    c_nm, c_yr, c_mo = st.columns([2, 1, 1])
+    with c_nm:
+        target = st.selectbox("승무원 선택", driver_options, key="leave_view_driver", label_visibility="collapsed")
+    with c_yr:
+        years = list(range(2023, now.year + 3))
+        y_idx = years.index(st.session_state.leave_view_year) if st.session_state.leave_view_year in years else 0
+        sel_year = st.selectbox("년도", years, index=y_idx, key="leave_view_year_sel", label_visibility="collapsed")
+        if sel_year != st.session_state.leave_view_year:
+            st.session_state.leave_view_year = sel_year
+            st.rerun(scope="fragment")
+    with c_mo:
+        months = list(range(1, 13))
+        m_idx = months.index(st.session_state.leave_view_month) if st.session_state.leave_view_month in months else 0
+        sel_month = st.selectbox("월", months, index=m_idx, key="leave_view_month_sel", label_visibility="collapsed")
+        if sel_month != st.session_state.leave_view_month:
+            st.session_state.leave_view_month = sel_month
+            st.rerun(scope="fragment")
+
+    st.divider()
+
+    if target == PLACEHOLDER:
+        st.info("👆 승무원을 선택하면 휴무 현황이 표시됩니다.")
+        return
+
+    if target.startswith("⚠️ ") and target.endswith(ABNORMAL_SUFFIX):
+        actual_name = target[len("⚠️ "):-len(ABNORMAL_SUFFIX)]
+        st.warning(f"'{actual_name}'은(는) 승무원 명단에 없는 이름입니다 — 입력 시 오타 등으로 잘못 등록됐을 가능성이 높습니다. 아래에서 확인 후 수정/삭제해주세요.")
+    else:
+        actual_name = target
+
+    year, month = st.session_state.leave_view_year, st.session_state.leave_view_month
+
+    if is_admin:
+        _render_delete_confirm_box()
+        _render_edit_schedule_panel(df)
+
+    if df.empty:
+        st.info("등록된 일정이 없습니다.")
+        return
+
+    my_df = df[(df['name'] == actual_name) & (df['date'].astype(str).str.startswith(f"{year}-{month:02d}"))].copy()
+    if my_df.empty:
+        st.info(f"{year}년 {month}월에 등록된 휴무가 없습니다.")
+        return
+    my_df = my_df.sort_values(by='date')
+
+    segments = _group_consecutive_leaves(my_df)
+    streak_map = {}
+    for seg in segments:
+        ids = [r['id'] for r in seg]
+        start, end = seg[0]['date'], seg[-1]['date']
+        for r in seg:
+            streak_map[r['id']] = {'ids': ids, 'start': start, 'end': end}
+
+    for rec in my_df.to_dict('records'):
+        col_color = utils.get_type_color(rec['type'])
+        cols = st.columns([1.4, 1, 2, 1.6]) if is_admin else st.columns([1.4, 1, 2])
+        with cols[0]:
+            st.markdown(
+                f"**{rec['date']}** <span style='background:{col_color}; color:white; padding:1px 8px; border-radius:10px; font-size:11px;'>{rec['type']}</span>",
+                unsafe_allow_html=True)
+        with cols[1]:
+            st.caption(rec['shift'] or "-")
+        with cols[2]:
+            st.caption(rec['note'] or "-")
+        if is_admin:
+            with cols[3]:
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    if st.button("✏️", key=f"leave_edit_{rec['id']}", help="수정", use_container_width=True):
+                        st.session_state['edit_sched_id'] = rec['id']
+                        st.rerun(scope="fragment")
+                with bc2:
+                    if st.button("🗑️", key=f"leave_del_{rec['id']}", help="삭제", use_container_width=True):
+                        info = streak_map.get(rec['id'], {'ids': [rec['id']], 'start': rec['date'], 'end': rec['date']})
+                        st.session_state['leave_delete_confirm'] = {
+                            'ids': info['ids'], 'start': info['start'], 'end': info['end'],
+                            'single_id': rec['id'], 'single_date': rec['date']
+                        }
+                        st.rerun(scope="fragment")
+
 # ==========================================
 # 3. 메인 렌더링 함수 (수정됨: 메모장 추가)
 # ==========================================
@@ -183,60 +381,44 @@ def calculate_layout_rows(df_month):
 # 년월 이동 등)이 다른 5개 탭까지 다시 실행시키지 않고 이 탭만 다시 그리게 함
 @st.fragment
 def render_calendar_tab(input_func=None):
+    section = utils.render_submenu(["전체현황", "개인 현황"], "submenu_cal")
+    if section == "개인 현황":
+        _render_individual_leave_view()
+    else:
+        _render_total_view(input_func)
+
+def _render_total_view(input_func=None):
     if st.session_state.get('last_error_msg'):
         st.error("오류 발생")
         st.code(st.session_state['last_error_msg'])
-    
-    c_title, c_legend, c_view = st.columns([1, 1.5, 0.8])
-    with c_title:
-        st.markdown("### 📅 월간 휴무 신청 현황")
+
+    view_mode = st.radio("보기", ["가로 스크롤", "달력"], horizontal=True, label_visibility="collapsed")
+
+    utils.inject_custom_css()
+
+    now = utils.get_kst_now()
+    if 'view_year' not in st.session_state:
+        st.session_state.view_year = now.year
+    if 'view_month' not in st.session_state:
+        st.session_state.view_month = now.month
+
+    c_nav, c_input, c_legend = st.columns([2.4, 1.3, 5.3])
+    with c_nav:
+        utils.render_month_nav("cal_month", "view_year", "view_month")
+    with c_input:
+        if st.session_state.get('auth_status') == 'admin':
+            _render_quick_input_button(input_func)
     with c_legend:
         types = ["휴무", "교육", "경조사", "징계", "당일 해지", "병가", "휴직", "기타"]
-        legend_html = "<div style='display:flex; flex-wrap:wrap; gap:5px; align-items:center; height:100%; margin-top:10px;'>"
+        legend_html = "<div style='display:flex; flex-wrap:wrap; gap:5px; align-items:center; justify-content:flex-end; height:100%;'>"
         for t in types:
             c = utils.get_type_color(t)
             legend_html += f"<span style='background:{c}; color:white; border:1px solid #333; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:bold;'>{t}</span>"
         legend_html += "</div>"
         st.markdown(legend_html, unsafe_allow_html=True)
-    with c_view:
-        view_mode = st.radio("보기", ["가로 스크롤", "달력"], horizontal=True, label_visibility="collapsed")
-    
-    utils.inject_custom_css()
-    
-    now = utils.get_kst_now()
-    if 'view_year' not in st.session_state: 
-        st.session_state.view_year = now.year
-        st.session_state.sb_view_year = now.year
-    if 'view_month' not in st.session_state: 
-        st.session_state.view_month = now.month
-        st.session_state.sb_view_month = now.month
-    
-    c1, c2, c3, c4, c5, c6, c7 = st.columns([0.3, 0.7, 0.3, 0.7, 0.4, 0.4, 1.2])
-    with c1: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
-    with c2:
-        years = list(range(2023, now.year + 3))
-        y_idx = years.index(st.session_state.view_year) if st.session_state.view_year in years else 0
-        st.selectbox("년도", years, index=y_idx, key='sb_view_year', label_visibility="collapsed")
-        if st.session_state.sb_view_year != st.session_state.view_year:
-            st.session_state.view_year = st.session_state.sb_view_year; st.rerun(scope="fragment")
-
-    with c3: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>월:</div>", unsafe_allow_html=True)
-    with c4:
-        months = list(range(1, 13))
-        m_idx = months.index(st.session_state.view_month) if st.session_state.view_month in months else 0
-        st.selectbox("월", months, index=m_idx, key='sb_view_month', label_visibility="collapsed")
-        if st.session_state.sb_view_month != st.session_state.view_month:
-            st.session_state.view_month = st.session_state.sb_view_month; st.rerun(scope="fragment")
-
-    with c5: st.button("◀", key="prev_cal_btn", on_click=prev_cal_callback)
-    with c6: st.button("▶", key="next_cal_btn", on_click=next_cal_callback)
-    
-    with c7:
-        if st.session_state.get('auth_status') == 'admin':
-            _render_quick_input_button(input_func)
 
     st.divider()
-    
+
     year, month = st.session_state.view_year, st.session_state.view_month
 
     # [최적화] 서로 무관한 시트 4개를 순차적으로 기다리는 대신 동시에 요청.
