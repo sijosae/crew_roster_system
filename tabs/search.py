@@ -28,15 +28,22 @@ def _get_history_dict():
     h_dict = {}
     if not gh.empty:
         for _, r in gh.iterrows():
-            if r['driver_name'] not in h_dict: h_dict[r['driver_name']] = []
-            h_dict[r['driver_name']].append((r['start_date'], r['group_name']))
+            # [수정] utils.get_group_from_dict과 짝을 맞춰 정규화된 이름을 키로 씀
+            key = utils.norm_name(r['driver_name'])
+            if key not in h_dict: h_dict[key] = []
+            h_dict[key].append((r['start_date'], r['group_name']))
         for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
     return h_dict
 
 def _render_detail_search(is_admin=False):
-    search_term = st.text_input("🔍 이름 또는 비고 검색", placeholder="이름을 입력하세요", key="search_term_input")
-    # [최적화] 버튼을 누르기 전엔 schedules를 아예 안 불러옴
-    if st.button("🔍 조회", key="btn_query_detail", type="primary"):
+    with st.container(key="inlinerow_detailsearch"):
+        c_input, c_btn = st.columns([1, 1])
+        with c_input:
+            search_term = st.text_input("🔍 이름 또는 비고 검색", placeholder="이름/비고", key="search_term_input", label_visibility="collapsed")
+        with c_btn:
+            # [최적화] 버튼을 누르기 전엔 schedules를 아예 안 불러옴
+            query_clicked = st.button("🔍 조회", key="btn_query_detail", type="primary")
+    if query_clicked:
         st.session_state['search_detail_queried'] = True
     if not st.session_state.get('search_detail_queried'):
         st.info("조회 버튼을 눌러주세요.")
@@ -79,18 +86,23 @@ def _highlight_consecutive_months(data):
 
 def _render_yearly_stats_logic():
     _init_search_session_state()
-    c_yr_txt, c_yr, c_empty = st.columns([0.2, 0.4, 2])
     now = utils.get_kst_now()
-    with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
-    with c_yr: 
-        year_range = range(2023, now.year + 3)
-        try: y_idx = list(year_range).index(st.session_state.search_stat_year)
-        except: y_idx = 0
-        sel_year = st.selectbox("년도", year_range, index=y_idx, key='sb_search_year', label_visibility="collapsed")
-        if sel_year != st.session_state.search_stat_year: st.session_state.search_stat_year = sel_year; st.rerun(scope="fragment")
+    with st.container(key="inlinerow_yearly"):
+        # [참고] 컬럼 실제 폭은 utils.inject_custom_css()의 inlinerow_yearly CSS가 고정폭으로
+        # 강제하므로, 여기 비율은 그 CSS가 안 먹는 극단적 상황에서의 대비용일 뿐 큰 의미 없음
+        c_yr_txt, c_yr, c_btn = st.columns([0.4, 0.7, 0.7])
+        with c_yr_txt: st.markdown("<div style='padding-top:10px; font-weight:bold; text-align:right;'>년도:</div>", unsafe_allow_html=True)
+        with c_yr:
+            year_range = range(2023, now.year + 3)
+            try: y_idx = list(year_range).index(st.session_state.search_stat_year)
+            except: y_idx = 0
+            sel_year = st.selectbox("년도", year_range, index=y_idx, key='sb_search_year', label_visibility="collapsed")
+            if sel_year != st.session_state.search_stat_year: st.session_state.search_stat_year = sel_year; st.rerun(scope="fragment")
+        with c_btn:
+            # [최적화] 버튼을 누르기 전엔 work_history를 아예 안 불러옴
+            query_clicked = st.button("📊 조회", key="btn_query_yearly", type="primary")
     st.info("💡 **25일 이상** 근무한 달이 **3개월 연속**되면 빨간색으로 표시됩니다.")
-    # [최적화] 버튼을 누르기 전엔 work_history를 아예 안 불러옴
-    if st.button("📊 조회", key="btn_query_yearly", type="primary"):
+    if query_clicked:
         st.session_state['search_yearly_queried'] = True
     st.divider()
     if not st.session_state.get('search_yearly_queried'):
@@ -151,9 +163,16 @@ def _highlight_gamcha_cells(val):
 
 def _render_vehicle_stats_logic():
     _init_search_session_state()
-    utils.render_month_nav("veh_month", "veh_year", "veh_month")
-    # [최적화] 버튼을 누르기 전엔 work_history를 아예 안 불러옴
-    if st.button("🚌 조회", key="btn_query_vehicle", type="primary"):
+    with st.container(key="inlinerow_vehicle"):
+        # [참고] 컬럼 실제 폭은 utils.inject_custom_css()의 inlinerow_vehicle CSS가 고정폭으로
+        # 강제함(월 이동 210px + 버튼). 더 이상 남는 공간을 채울 빈 컬럼이 필요 없음.
+        c_nav, c_btn = st.columns([1, 0.45])
+        with c_nav:
+            utils.render_month_nav("veh_month", "veh_year", "veh_month")
+        with c_btn:
+            # [최적화] 버튼을 누르기 전엔 work_history를 아예 안 불러옴
+            query_clicked = st.button("🚌 조회", key="btn_query_vehicle", type="primary")
+    if query_clicked:
         st.session_state['search_vehicle_queried'] = True
     st.divider()
     if not st.session_state.get('search_vehicle_queried'):

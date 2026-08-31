@@ -33,7 +33,7 @@ def main():
             st.markdown("<br><br><br>", unsafe_allow_html=True)
             c1, c2, c3 = st.columns([1, 1, 1])
             with c2:
-                st.image("copyright_woojin.png", width=150)
+                st.image("logo.jpg", width=150)
                 st.title("우진교통 배차 관리 시스템")
                 with st.form("login_form"):
                     uid = st.text_input("아이디")
@@ -77,7 +77,7 @@ def main():
     # 메인 화면
     c_head1, c_head2 = st.columns([9, 1.4])
     with c_head1:
-        st.image("copyright_woojin.png", width=90)
+        st.image("logo.jpg", width=90)
     with c_head2:
         c_name, c_btn = st.columns([1.2, 1])
         with c_name:
@@ -111,7 +111,7 @@ def main():
             utils.log_login_access(pending_uid, st.session_state.get('user_name'))
 
         if st.session_state['auth_status'] == 'admin':
-            t1, t2, t3, t4, t5, t6 = st.tabs(["📅 휴무 현황", "👤 근무 현황", "📝 입력/배차", "⚙️ 승무원", "📊 조회", "🔧 로그"])
+            t1, t2, t3, t4, t5, t6 = st.tabs(["📅 휴무 현황", "👤 근무 현황", "📝 입력/배차", "⚙️ 승무원", "📊 조회", "🔧 시스템"])
             with t1: total_status.render_calendar_tab(input_mgr.render_quick_input_content)
             with t2: individual.render_individual_calendar_tab()
             with t3: input_mgr.render_input_tab()

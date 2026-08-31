@@ -70,12 +70,13 @@ def get_stats_optimized(date_str, drivers_list, today_schedules_records, history
     am_cnt, pm_cnt, off_cnt = 0, 0, 0
     manual_map = {}
     for row in today_schedules_records:
-        manual_map[row['name']] = (row['type'], row.get('shift', '자동'))
+        # [수정] 이름 대소문자가 달라도 같은 사람으로 인식하도록 정규화된 이름을 키로 씀
+        manual_map[utils.norm_name(row['name'])] = (row['type'], row.get('shift', '자동'))
 
     for name in active_drivers_list:
         final_shift = None
-        if name in manual_map:
-            typ, sft = manual_map[name]
+        if utils.norm_name(name) in manual_map:
+            typ, sft = manual_map[utils.norm_name(name)]
             if typ == '휴무': final_shift = '휴무'
             elif sft and sft != '자동': final_shift = sft
         if not final_shift:
@@ -90,6 +91,7 @@ def get_stats_optimized(date_str, drivers_list, today_schedules_records, history
     return full_text, short_text
 
 def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
+    p_name = utils.norm_name(p_name)  # full_schedule_map도 정규화된 이름을 키로 씀
     if (p_name, p_date_str) not in full_schedule_map: return "", "", ""
     curr = datetime.strptime(p_date_str, "%Y-%m-%d")
     start_date, end_date = curr, curr
@@ -113,22 +115,27 @@ def get_streak_info(full_schedule_map, p_name, p_date_str, p_type):
 
 def calculate_layout_rows(df_month):
     if df_month.empty: return {}, 0
-    df_sorted = df_month.sort_values(by=['name', 'date'])
+    # [수정] 같은 사람의 연속된 휴무를 하나의 막대로 묶는 로직인데, 이름 대소문자가 날마다
+    # 다르게 입력돼 있으면(예: "김성근B"/"김성근b") 정렬도 따로 되고 같은 사람으로도 안 묶임.
+    # 정규화한 이름으로 정렬/비교하되, 화면에 보일 이름(c_name)은 원래 표기 그대로 둠.
+    df_sorted = df_month.copy()
+    df_sorted['_name_key'] = df_sorted['name'].astype(str).map(utils.norm_name)
+    df_sorted = df_sorted.sort_values(by=['_name_key', 'date'])
     segments = []
     if not df_sorted.empty:
         curr = df_sorted.iloc[0]
-        c_name, c_type, c_start, c_end = curr['name'], curr['type'], curr['date'], curr['date']
+        c_name, c_key, c_type, c_start, c_end = curr['name'], curr['_name_key'], curr['type'], curr['date'], curr['date']
         c_recs = [curr]
         for i in range(1, len(df_sorted)):
             row = df_sorted.iloc[i]
             pd_date = datetime.strptime(c_end, "%Y-%m-%d")
             cd = datetime.strptime(row['date'], "%Y-%m-%d")
-            if row['name'] == c_name and row['type'] == c_type and (cd - pd_date).days == 1:
+            if row['_name_key'] == c_key and row['type'] == c_type and (cd - pd_date).days == 1:
                 c_end = row['date']
                 c_recs.append(row)
             else:
                 segments.append({'name': c_name, 'type': c_type, 'start': c_start, 'end': c_end, 'records': c_recs})
-                c_name, c_type, c_start, c_end = row['name'], row['type'], row['date'], row['date']
+                c_name, c_key, c_type, c_start, c_end = row['name'], row['_name_key'], row['type'], row['date'], row['date']
                 c_recs = [row]
         segments.append({'name': c_name, 'type': c_type, 'start': c_start, 'end': c_end, 'records': c_recs})
     
@@ -173,7 +180,7 @@ def _render_edit_schedule_panel(df):
         return
     row = match.iloc[0]
 
-    with st.container(border=True):
+    with st.container(border=True, key="formbox_editsched"):
         c_title, c_close = st.columns([5, 1])
         with c_title: st.markdown(f"#### ✏️ 일정 수정 - {row['name']}")
         with c_close:
@@ -181,11 +188,15 @@ def _render_edit_schedule_panel(df):
                 st.session_state['edit_sched_id'] = None
                 st.rerun(scope="fragment")
 
-        new_date = st.date_input("날짜", value=pd.to_datetime(row['date']), key="edit_sched_date")
-        t_idx = SCHEDULE_TYPE_OPTIONS.index(row['type']) if row['type'] in SCHEDULE_TYPE_OPTIONS else 0
-        new_type = st.selectbox("구분", SCHEDULE_TYPE_OPTIONS, index=t_idx, key="edit_sched_type")
-        s_idx = SCHEDULE_SHIFT_OPTIONS.index(row['shift']) if row['shift'] in SCHEDULE_SHIFT_OPTIONS else 0
-        new_shift = st.selectbox("근무", SCHEDULE_SHIFT_OPTIONS, index=s_idx, key="edit_sched_shift")
+        c_date, c_type, c_shift = st.columns(3)
+        with c_date:
+            new_date = st.date_input("날짜", value=pd.to_datetime(row['date']), key="edit_sched_date")
+        with c_type:
+            t_idx = SCHEDULE_TYPE_OPTIONS.index(row['type']) if row['type'] in SCHEDULE_TYPE_OPTIONS else 0
+            new_type = st.selectbox("구분", SCHEDULE_TYPE_OPTIONS, index=t_idx, key="edit_sched_type")
+        with c_shift:
+            s_idx = SCHEDULE_SHIFT_OPTIONS.index(row['shift']) if row['shift'] in SCHEDULE_SHIFT_OPTIONS else 0
+            new_shift = st.selectbox("근무", SCHEDULE_SHIFT_OPTIONS, index=s_idx, key="edit_sched_shift")
         new_note = st.text_input("비고", value=row['note'], key="edit_sched_note")
 
         c_save, c_del = st.columns(2)
@@ -278,38 +289,46 @@ def _render_individual_leave_view():
         return
 
     df = utils.load_data("schedules")
+    year, month = st.session_state.leave_view_year, st.session_state.leave_view_month
 
     # [추가] 휴무 입력 때 오타 등으로 등록 안 된 이름이 그대로 저장된 경우, 정상 승무원
     # 목록에는 안 뜨니까 찾아서 지울 방법이 없었음 -> schedules에는 있는데 drivers엔 없는
     # 이름을("이상등록자") 목록 맨 아래에 따로 표시해서 선택할 수 있게 함
+    # [수정] 대소문자만 다른 이름("김성근b" vs "김성근B")도 같은 사람으로 봐야 하는데,
+    # 그냥 문자열로 비교하면 서로 다른 사람 취급돼서 정상 등록자가 이상등록자로 잘못
+    # 표시되던 문제가 있었음 - 비교는 항상 utils.norm_name()을 거침
     ABNORMAL_SUFFIX = " (미등록)"
-    valid_names = set(drivers['name'].astype(str).str.strip())
+    valid_names_norm = set(drivers['name'].astype(str).map(utils.norm_name))
     abnormal_names = []
     if not df.empty:
-        abnormal_names = sorted(set(df['name'].astype(str).str.strip()) - valid_names - {""})
+        sched_names_raw = df['name'].astype(str).str.strip()
+        abnormal_names = sorted({n for n in sched_names_raw if n and utils.norm_name(n) not in valid_names_norm})
+
+    include_all = st.checkbox("휴무 일정이 없는 직원 포함", key="leave_include_all")
+
+    # [추가] 기본은 "이 달에 휴무가 있는 사람만" - 체크하면 승무원 전체가 보임.
+    # 월을 바꾸면(아래 render_month_nav) 이 목록도 그 달 기준으로 다시 계산됨.
+    if include_all or df.empty:
+        base_names = sorted(drivers['name'].tolist())
+    else:
+        month_df = df[df['date'].astype(str).str.startswith(f"{year}-{month:02d}")]
+        names_with_leave_norm = set(month_df['name'].astype(str).map(utils.norm_name))
+        base_names = sorted([n for n in drivers['name'].tolist() if utils.norm_name(n) in names_with_leave_norm])
 
     PLACEHOLDER = "승무원을 선택하세요"
-    driver_options = [PLACEHOLDER] + sorted(drivers['name'].tolist())
+    driver_options = [PLACEHOLDER] + base_names
     if abnormal_names:
         driver_options += [f"⚠️ {n}{ABNORMAL_SUFFIX}" for n in abnormal_names]
+    # 월/필터가 바뀌어서 이전에 고른 사람이 목록에서 빠졌으면 안전하게 초기화
+    if st.session_state.get('leave_view_driver') not in driver_options:
+        st.session_state['leave_view_driver'] = PLACEHOLDER
 
-    c_nm, c_yr, c_mo = st.columns([2, 1, 1])
-    with c_nm:
-        target = st.selectbox("승무원 선택", driver_options, key="leave_view_driver", label_visibility="collapsed")
-    with c_yr:
-        years = list(range(2023, now.year + 3))
-        y_idx = years.index(st.session_state.leave_view_year) if st.session_state.leave_view_year in years else 0
-        sel_year = st.selectbox("년도", years, index=y_idx, key="leave_view_year_sel", label_visibility="collapsed")
-        if sel_year != st.session_state.leave_view_year:
-            st.session_state.leave_view_year = sel_year
-            st.rerun(scope="fragment")
-    with c_mo:
-        months = list(range(1, 13))
-        m_idx = months.index(st.session_state.leave_view_month) if st.session_state.leave_view_month in months else 0
-        sel_month = st.selectbox("월", months, index=m_idx, key="leave_view_month_sel", label_visibility="collapsed")
-        if sel_month != st.session_state.leave_view_month:
-            st.session_state.leave_view_month = sel_month
-            st.rerun(scope="fragment")
+    with st.container(key="formbox_indiv_nav"):
+        c_nm, c_nav = st.columns([1, 1.2])
+        with c_nm:
+            target = st.selectbox("승무원 선택", driver_options, key="leave_view_driver", label_visibility="collapsed")
+        with c_nav:
+            utils.render_month_nav("leave_month", "leave_view_year", "leave_view_month")
 
     st.divider()
 
@@ -322,8 +341,6 @@ def _render_individual_leave_view():
         st.warning(f"'{actual_name}'은(는) 승무원 명단에 없는 이름입니다 — 입력 시 오타 등으로 잘못 등록됐을 가능성이 높습니다. 아래에서 확인 후 수정/삭제해주세요.")
     else:
         actual_name = target
-
-    year, month = st.session_state.leave_view_year, st.session_state.leave_view_month
 
     if is_admin:
         _render_delete_confirm_box()
@@ -443,8 +460,9 @@ def _render_total_view(input_func=None):
     full_schedule_map = {}
     if not df.empty:
         # [최적화] iterrows() 대신 zip으로 순회 (7천+행 규모라 Series 생성 비용을 피함)
+        # [수정] get_streak_info와 짝을 맞춰 정규화된 이름을 키로 씀
         for n, d, t in zip(df['name'], df['date'].astype(str), df['type']):
-            full_schedule_map[(n, d)] = t
+            full_schedule_map[(utils.norm_name(n), d)] = t
 
     df_events_month = df_events[df_events['date'].astype(str).str.startswith(f"{year}-{month:02d}")] if not df_events.empty else pd.DataFrame()
 
@@ -464,8 +482,10 @@ def _render_total_view(input_func=None):
     history_dict = {}
     if not group_history_df.empty:
         for _, row in group_history_df.iterrows():
-            if row['driver_name'] not in history_dict: history_dict[row['driver_name']] = []
-            history_dict[row['driver_name']].append((row['start_date'], row['group_name']))
+            # [수정] utils.get_group_from_dict과 짝을 맞춰 정규화된 이름을 키로 씀
+            key = utils.norm_name(row['driver_name'])
+            if key not in history_dict: history_dict[key] = []
+            history_dict[key].append((row['start_date'], row['group_name']))
         for k in history_dict: history_dict[k].sort(key=lambda x:x[0], reverse=True)
 
     _, last_day = calendar.monthrange(year, month)

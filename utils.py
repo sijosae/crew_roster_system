@@ -148,6 +148,66 @@ def inject_custom_css():
             max-width: 90vw;
             flex: 0 0 auto !important;
         }
+
+        /* [입력 폼 박스] 입력칸들이 화면 전체 폭(기본 100%)으로 늘어나던 것을 막음.
+           데스크톱에서는 최대 640px로 제한하고, 모바일(좁은 화면)에서는 다시 100%로
+           풀어서(고정폭이 오히려 넘칠 수 있음) 화면에 맞게 씀. */
+        div[class*="st-key-formbox_"] { max-width: 640px !important; }
+        @media (max-width: 640px) {
+            div[class*="st-key-formbox_"] { max-width: 100% !important; }
+        }
+
+        /* [한 줄 배치] 검색창+버튼, 년도+버튼처럼 "줄바꿈 없이 한 줄에" 붙여야 하는 곳.
+           [주의] Streamlit이 모바일 화면에서 컬럼마다 거의 전체 폭(calc(100% - 1.5rem))을
+           강제로 걸어서, 컬럼별 폭을 직접 고정해두지 않으면 nowrap인 컬럼들이 각각 화면
+           폭만큼 늘어나 옆으로 한참 밀려남(실제로 이 문제로 년도 조회 줄이 화면 밖으로
+           밀려나 폰에서 오른쪽으로 스크롤해야 보이던 버그가 있었음). 그래서 화면마다
+           실제 필요한 만큼만 딱 고정폭을 줘서, 모바일에서도 스크롤 없이 한 줄에 다 보이게
+           함. overflow-x:auto는 혹시 모를 경우를 위한 안전장치로만 둠. */
+        div[class*="st-key-inlinerow_"] {
+            overflow-x: auto !important;
+            max-width: 100% !important;
+        }
+        div[class*="st-key-inlinerow_"] div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            gap: 8px !important;
+        }
+        /* [주의] 아래 폭 고정 규칙들은 반드시 "바로 아래 자식(>)" 경로로만 걸어야 함.
+           월간 차량별 현황처럼 안에 utils.render_month_nav()(자기 자신도 st-key-monthnav_*
+           안에 nth-of-type(1)/(2)/(3) 폭 고정 규칙이 있음)를 품는 화면에서, 조상 선택자를
+           그냥 descendant(공백)로 쓰면 CSS의 nth-of-type이 "같은 조상 밑 몇 번째 자식이든"
+           다 잡아버려서 안쪽 monthnav의 ◀/▶/선택박스 폭까지 덮어써버리는 버그가 있었음
+           (실제로 이걸로 월간 차량별 현황의 월 이동 UI가 깨졌었음). 구조:
+           st-key-X(=stVerticalBlock) > stLayoutWrapper > stHorizontalBlock > stColumn */
+        /* 상세 이력 조회: [검색창 130px][버튼(내용만큼)] */
+        div[class*="st-key-inlinerow_detailsearch"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(1) {
+            width: 130px !important; min-width: 130px !important; max-width: 130px !important;
+            flex: 0 0 130px !important;
+        }
+        div[class*="st-key-inlinerow_detailsearch"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(2) {
+            width: auto !important; min-width: 0 !important; flex: 0 0 auto !important;
+        }
+        /* 연간 근무 집계: [년도: 50px][선택박스 100px][버튼(내용만큼)] */
+        div[class*="st-key-inlinerow_yearly"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(1) {
+            width: 50px !important; min-width: 50px !important; max-width: 50px !important;
+            flex: 0 0 50px !important;
+        }
+        div[class*="st-key-inlinerow_yearly"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(2) {
+            width: 100px !important; min-width: 100px !important; max-width: 100px !important;
+            flex: 0 0 100px !important;
+        }
+        div[class*="st-key-inlinerow_yearly"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(3) {
+            width: auto !important; min-width: 0 !important; flex: 0 0 auto !important;
+        }
+        /* 월간 차량별 현황: [월 이동(◀연월▶) 210px][버튼(내용만큼)] - 안에 monthnav_가
+           중첩되어 있어서 위 설명대로 반드시 직계 자식(>) 경로로만 걸어야 함 */
+        div[class*="st-key-inlinerow_vehicle"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(1) {
+            width: 210px !important; min-width: 210px !important; max-width: 210px !important;
+            flex: 0 0 210px !important;
+        }
+        div[class*="st-key-inlinerow_vehicle"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(2) {
+            width: auto !important; min-width: 0 !important; flex: 0 0 auto !important;
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -501,13 +561,21 @@ def _restore_driver_full(before_rows):
 # ==========================================
 # 3. 데이터 저장 (절대 좌표 강제)
 # ==========================================
+# [추가] 이름 비교용 정규화 키. 승무원 이름 뒤에 "김성근B"처럼 영문자가 붙는 경우가 있는데,
+# 입력할 때 대소문자를 다르게 치면("김성근b") 완전히 다른 문자열 취급되어 명단에 있는데도
+# 없는 사람처럼 걸러지던 문제가 있었음(실제로 이상등록자로 여러 건 쌓여있었음). 이름을
+# 비교할 때는 항상 이 함수를 거쳐서 대소문자 차이를 무시하고, 저장/화면 표시는 원래 대소문자
+# 그대로 유지함(비교용으로만 씀).
+def norm_name(val):
+    return str(val).strip().upper()
+
 # [추가] 휴무 등록 시 오타 등으로 실제 등록 안 된 승무원 이름이 그대로 저장되는 걸 막기 위한 검증.
 # schedules에 이름만 잘못 들어가면 개인현황(등록된 승무원만 목록에 뜸)에서 찾을 방법이 없어져서
 # 저장 전에 미리 걸러내야 함.
 def validate_driver_names(name_list):
     drivers_df = load_data("drivers")
-    valid_names = set(drivers_df['name'].astype(str).str.strip()) if not drivers_df.empty else set()
-    return [n for n in name_list if n not in valid_names]
+    valid_names = set(drivers_df['name'].astype(str).map(norm_name)) if not drivers_df.empty else set()
+    return [n for n in name_list if norm_name(n) not in valid_names]
 
 # [추가] 같은 사람이 같은 날짜에 이미 휴무 등록이 되어있는데 또 등록되는 걸 막기 위한 검증.
 # (겹치는 (이름, 날짜) 목록을 반환 - 비어있으면 중복 없음)
@@ -517,16 +585,20 @@ def check_duplicate_schedule(name_list, start, end):
         return []
     dates = pd.date_range(start, end)
     date_strs = set(d.strftime("%Y-%m-%d") for d in dates)
-    name_set = set(name_list)
-    dup_df = df[df['name'].isin(name_set) & df['date'].astype(str).isin(date_strs)]
+    name_set = set(norm_name(n) for n in name_list)
+    dup_df = df[df['name'].astype(str).map(norm_name).isin(name_set) & df['date'].astype(str).isin(date_strs)]
     return [(row['name'], row['date']) for _, row in dup_df.iterrows()]
 
 def save_range_batch(name_list, start, end, type, shift, note):
     dates = pd.date_range(start, end)
     now_kst = get_kst_now()
     created_at = now_kst.strftime("%Y-%m-%d %H:%M:%S")
-    base_id = now_kst.strftime("%y%m%d%H%M")
-    
+    # [수정] 분(minute) 단위까지만 쓰면, 같은 분 안에 저장 버튼을 두 번 누르는 것만으로도
+    # count가 매번 0부터 다시 시작해서 id가 그대로 겹침 (실제로 schedules에 중복 id
+    # 81개가 이미 쌓여 있었음 - id로 특정 행을 찾는 수정/삭제가 엉뚱한 행을 건드릴 위험).
+    # 초(second) 단위까지 넣어서 충돌 구간을 60배 줄임.
+    base_id = now_kst.strftime("%y%m%d%H%M%S")
+
     rows_to_add = []
     generated_ids = []
     count = 0
@@ -645,12 +717,17 @@ def _save_work_history_year_group(year, df_new_year):
         if c not in df_old.columns: df_old[c] = ""
     df_new_year = df_new_year[WORK_HISTORY_REQUIRED_COLS]
 
+    # [주의] 'name' 기준으로 중복 제거하면 안 됨: 같은 날 같은 근무에 어떤 사람이
+    # 다른 기사 대신 대운(대차)으로 다른 차량에 들어가는 경우, 그 사람 본인 고정 배차
+    # 기록과 (날짜,이름,근무)가 겹쳐서 대운 기록이 삭제되는 버그가 있었음.
+    # 차량(car)까지 포함해야 "같은 차/같은 날/같은 근무 = 한 건" 이라는 실제 의미와 일치함.
+    dedup_cols = ['date', 'car', 'shift']
     if df_old.empty:
-        df_final = df_new_year
+        df_final = df_new_year.drop_duplicates(subset=dedup_cols, keep='last')
     else:
         df_old = df_old[WORK_HISTORY_REQUIRED_COLS]
         df_combined = pd.concat([df_old, df_new_year])
-        df_final = df_combined.drop_duplicates(subset=['date', 'name', 'shift'], keep='last')
+        df_final = df_combined.drop_duplicates(subset=dedup_cols, keep='last')
 
     df_final = df_final.sort_values(by=['date', 'name'])
     ws.clear()
@@ -676,32 +753,181 @@ def save_work_history(df_new):
         saved += _save_work_history_year_group(int(year), group)
     return saved
 
-# [마이그레이션] 연도별 분리 전에 쓰던 단일 work_history 시트를 work_history_{year} 시트들로
-# 옮기는 1회성 작업. 예전 시트를 찾아서 옮긴 뒤 이름을 바꿔두므로, 다시 실행해도
-# (예전 시트가 더 이상 없어서) 아무 일도 안 일어나 안전하게 여러 번 눌러도 됨.
-def migrate_old_work_history():
+# ==========================================
+# 2-2. 이상데이터 진단 / 정리
+# ==========================================
+# [추가] 예전 배차일지 파서 버그(표 경계를 못 잡아서 하단 요약란이 배차 데이터로
+# 섞여 들어가던 것)와 예전 schedules id 생성 버그(분 단위라 같은 분에 두 번 저장하면
+# id가 겹치던 것)로 실제 시트에 이미 쌓인 이상 데이터를 찾아서 보여주고 정리하기 위함.
+# [성능] work_history_2025 등은 9만 행이 넘어서, 행 단위(.apply(axis=1))로 하나씩
+# 파이썬 함수를 호출하면 수십 초씩 걸림. pandas 벡터 연산으로 한 번에 판정한다.
+def _work_history_garbage_mask(df):
+    empty = pd.Series([""] * len(df), index=df.index)
+    name = df['name'].astype(str).str.strip() if 'name' in df.columns else empty
+    car = df['car'].astype(str).str.strip() if 'car' in df.columns else empty
+    route = df['route'].astype(str).str.strip() if 'route' in df.columns else empty
+    car_num = pd.to_numeric(car, errors='coerce')
+    return (name == "") | car_num.isna() | (car_num < 5001) | (car_num > 5300) | (route.str.len() > 15)
+
+def _work_history_year_sheets():
+    sh = get_db_connection()
+    years = []
+    for ws in sh.worksheets():
+        m = re.fullmatch(r'work_history_(\d{4})', ws.title)
+        if m:
+            years.append(int(m.group(1)))
+    return sorted(years)
+
+def diagnose_data_issues():
+    result = {}
+
+    drivers = load_data("drivers")
+    if not drivers.empty and 'id' in drivers.columns:
+        blank = drivers[drivers['id'].astype(str).str.strip() == ""]
+        if len(blank):
+            result['drivers_blank_id'] = {'count': len(blank), 'sample': blank['name'].astype(str).tolist()[:15]}
+
+    schedules = load_data("schedules")
+    if not schedules.empty and 'id' in schedules.columns:
+        ids = schedules['id'].astype(str).str.strip()
+        dup_ids = ids[ids.duplicated(keep=False) & (ids != "")]
+        blank_ids = int((ids == "").sum())
+        if len(dup_ids) or blank_ids:
+            result['schedules_id'] = {
+                'dup_id_count': int(dup_ids.nunique()), 'dup_row_count': int(len(dup_ids)),
+                'blank_count': blank_ids
+            }
+    if not schedules.empty and 'name' in schedules.columns:
+        valid_names_norm = set(drivers['name'].astype(str).map(norm_name)) if not drivers.empty else set()
+        sched_names = schedules['name'].astype(str).str.strip()
+        invalid = sorted({n for n in sched_names if n and norm_name(n) not in valid_names_norm})
+        if invalid:
+            result['schedules_invalid_names'] = {'count': len(invalid), 'sample': invalid[:15]}
+        if 'date' in schedules.columns:
+            dup_key = schedules[['name', 'date']].astype(str)
+            dup_mask = dup_key.duplicated(keep=False) & (dup_key['name'].str.strip() != "")
+            if dup_mask.any():
+                result['schedules_dup_registration'] = {
+                    'combo_count': int(dup_key[dup_mask].drop_duplicates().shape[0]),
+                    'row_count': int(dup_mask.sum())
+                }
+
+    gh = load_data("group_history")
+    if not gh.empty and 'driver_name' in gh.columns and not drivers.empty:
+        valid_names_norm2 = set(drivers['name'].astype(str).map(norm_name))
+        gh_names = gh['driver_name'].astype(str).str.strip()
+        orphan = sorted({n for n in gh_names if n and norm_name(n) not in valid_names_norm2})
+        if orphan:
+            result['group_history_orphan'] = {'count': len(orphan), 'sample': orphan[:15]}
+
+    wh_issues = {}
+    for year in _work_history_year_sheets():
+        wdf = load_work_history_for_year(year)
+        if wdf.empty:
+            continue
+        n_garbage = int(_work_history_garbage_mask(wdf).sum())
+        n_dup = 0
+        if {'date', 'car', 'shift'}.issubset(wdf.columns):
+            n_dup = int(wdf.duplicated(subset=['date', 'car', 'shift'], keep=False).sum())
+        if n_garbage or n_dup:
+            wh_issues[year] = {'total': len(wdf), 'garbage': n_garbage, 'dup': n_dup}
+    if wh_issues:
+        result['work_history'] = wh_issues
+
+    return result
+
+# [정리] schedules에서 id가 비어있거나 중복인 행에 새 고유 id를 부여. save_range_batch와
+# 같은 형식(초 단위 타임스탬프 + 순번)으로 만들되, 기존 id와 절대 안 겹치게 매번 확인한다.
+def fix_schedule_id_issues():
+    sh = get_db_connection()
+    ws = sh.worksheet("schedules")
+    all_values = ws.get_all_values()
+    if len(all_values) <= 1:
+        return 0
+    headers = all_values[0]
+    try:
+        id_col = headers.index('id')
+    except ValueError:
+        return 0
+
+    seen = set()
+    to_fix = []
+    for i, row in enumerate(all_values[1:], start=2):
+        cur_id = row[id_col].strip() if len(row) > id_col else ""
+        if not cur_id or cur_id in seen:
+            to_fix.append(i)
+        else:
+            seen.add(cur_id)
+    if not to_fix:
+        return 0
+
+    base = get_kst_now().strftime("%y%m%d%H%M%S")
+    counter = 0
+    for row_idx in to_fix:
+        new_id = f"{base}{counter:03d}"
+        while new_id in seen:
+            counter += 1
+            new_id = f"{base}{counter:03d}"
+        ws.update_cell(row_idx, id_col + 1, new_id)
+        seen.add(new_id)
+        counter += 1
+    clear_cache_after_save("schedules")
+    return len(to_fix)
+
+# [정리] work_history_{year} 시트에서 예전 파서 버그로 섞여 들어간 요약란 쓰레기 행
+# (이름 빈칸/차량번호 범위 밖/노선 텍스트 비정상) 삭제 + (날짜,차량,근무) 중복 정리를
+# 한 번에 처리. 삭제이지 롤백 불가라서 UI에서 진단 결과 보여준 다음에만 실행하게 함.
+def clean_work_history_garbage(year):
+    sheet_name = work_history_sheet_name(year)
     sh = get_db_connection()
     try:
-        ws_old = sh.worksheet("work_history")
+        ws = sh.worksheet(sheet_name)
     except gspread.exceptions.WorksheetNotFound:
-        return {"status": "not_found", "count": 0}
+        return 0, 0
+    all_values = ws.get_all_values()
+    if len(all_values) <= 1:
+        return 0, 0
+    headers = all_values[0]
+    df = pd.DataFrame(all_values[1:], columns=headers)
+    before = len(df)
 
-    existing_data = ws_old.get_all_values()
-    if len(existing_data) <= 1:
-        return {"status": "empty", "count": 0}
+    df_clean = df[~_work_history_garbage_mask(df)]
+    if {'date', 'car', 'shift'}.issubset(df_clean.columns):
+        df_clean = df_clean.drop_duplicates(subset=['date', 'car', 'shift'], keep='last')
+    removed = before - len(df_clean)
+    if removed == 0:
+        return 0, before
 
-    headers = existing_data.pop(0)
-    df_old = pd.DataFrame(existing_data, columns=headers)
-    saved = save_work_history(df_old)
-
-    ws_old.update_title(f"work_history_migrated_{get_kst_now().strftime('%Y%m%d_%H%M%S')}")
-    return {"status": "done", "count": saved}
-
-def _new_driver_id():
-    return get_kst_now().strftime("%y%m%d%H%M%S")
+    df_clean = df_clean.sort_values(by=['date', 'name'])
+    ws.clear()
+    data_to_write = [headers] + df_clean.fillna("").astype(str).values.tolist()
+    try:
+        ws.update(values=data_to_write, range_name="A1", value_input_option='USER_ENTERED')
+    except TypeError:
+        ws.update("A1", data_to_write, value_input_option='USER_ENTERED')
+    clear_cache_after_save(sheet_name)
+    return removed, before
 
 def _row_from_headers(headers, values_dict):
     return [str(values_dict.get(h, "")) for h in headers]
+
+# [단순화] 타임스탬프 기반 id 대신 "기존 최댓값 + 1" 방식의 평범한 순번으로 변경.
+# all_values/headers를 이미 갖고 있으면(backfill처럼 여러 번 불러야 할 때) 넘겨서
+# 매번 시트를 다시 읽는 걸 피할 수 있음.
+def _max_driver_id(all_values, headers):
+    try:
+        id_col = headers.index('id')
+    except ValueError:
+        return 0
+    max_id = 0
+    for row in all_values[1:]:
+        if len(row) > id_col:
+            try:
+                v = int(row[id_col].strip())
+                if v > max_id: max_id = v
+            except (ValueError, AttributeError):
+                continue
+    return max_id
 
 def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     # [수정] id 컬럼에 항상 빈 문자열("")을 넣고 있어서 신규 등록자에게 id가 안 붙던 버그.
@@ -709,11 +935,18 @@ def add_driver_with_group(name, group_name, start_date="2020-01-01"):
     sh = get_db_connection()
     ws_drivers = sh.worksheet("drivers")
     created_at = get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
-    driver_id = _new_driver_id()
+    driver_id = None
     try:
-        existing = ws_drivers.find(name)
+        # [수정] ws.find(name)은 대소문자를 구분해서, "김성근b"로 조 변경을 실행하면
+        # 명단에 이미 있는 "김성근B"를 못 찾고 중복 등록해버리던 버그가 있었음.
+        # 직접 불러와서 대소문자 무시하고 비교함(그대로 name_col도 헤더 이름으로 찾음).
+        all_values = ws_drivers.get_all_values()
+        headers = all_values[0] if all_values else ws_drivers.row_values(1)
+        name_col = headers.index('name') if 'name' in headers else 1
+        target_norm = norm_name(name)
+        existing = any(len(r) > name_col and norm_name(r[name_col]) == target_norm for r in all_values[1:])
         if not existing:
-            headers = ws_drivers.row_values(1)
+            driver_id = str(_max_driver_id(all_values, headers) + 1)
             row = _row_from_headers(headers, {
                 'id': driver_id, 'name': name, 'group_name': group_name,
                 'created_at': created_at, 'resigned_date': ''
@@ -739,11 +972,13 @@ def backfill_driver_ids():
         id_col = headers.index('id')
     except ValueError:
         return 0
+    next_id = _max_driver_id(all_values, headers) + 1
     updated = 0
     for i, row in enumerate(all_values[1:], start=2):
         cur_id = row[id_col].strip() if len(row) > id_col else ""
         if not cur_id:
-            ws.update_cell(i, id_col + 1, f"{_new_driver_id()}{updated:02d}")
+            ws.update_cell(i, id_col + 1, str(next_id))
+            next_id += 1
             updated += 1
     if updated:
         clear_cache_after_save("drivers")
@@ -937,9 +1172,12 @@ def calculate_auto_shift(group_name, target_date_str):
         return pat[((tgt - ref).days + off) % 10]
     except: return None
 
+# [수정] history_dict는 항상 norm_name()으로 정규화한 이름을 키로 써야 함(호출부 참고) -
+# 대소문자만 다른 이름이 서로 다른 사람 취급되어 조 이력을 못 찾던 문제를 없애기 위함.
 def get_group_from_dict(history_dict, name, target_date_str):
-    if name not in history_dict: return None
-    records = history_dict[name]
+    key = norm_name(name)
+    if key not in history_dict: return None
+    records = history_dict[key]
     for start_date, group in records:
         if start_date <= target_date_str:
             return group
@@ -962,20 +1200,6 @@ def get_daily_shift_summary(date_str):
     line2 = f"<div style='display:flex; justify-content:space-between; align-items:center;'><span style='color:#d9480f; font-weight:bold;'>오후: {','.join(pm)}</span><span style='color:#868e96; font-size:0.85em; font-weight:bold;'>휴무: {','.join(off_from_pm)}</span></div>"
     return line1 + line2
 
-def get_reduction_rules():
-    df = load_data("reduction_rules")
-    rules = []
-    if not df.empty and 'start_date' in df.columns:
-        for _, row in df.iterrows():
-            rules.append({
-                'start': row['start_date'],
-                'end': row['end_date'],
-                'route': str(row['route']).strip(),
-                'seq': str(row['sequence']).strip(),
-                'condition': row['condition']
-            })
-    return rules
-
 def normalize_key(val):
     if pd.isna(val) or val == "": return ""
     s = str(val).strip()
@@ -984,23 +1208,46 @@ def normalize_key(val):
     except:
         return s
 
+# [성능] 날짜 파싱(pd.to_datetime)과 노선/순번 정규화를 여기서 규칙 개수만큼만 한 번씩
+# 해둔다. is_reduction_target은 차량×날짜×근무 칸 하나마다(월간 차량별 현황에서 수백~
+# 수천 번) 호출되므로, 거기서 매번 다시 파싱하면 확 느려짐 (실제로 이 문제로 조회가
+# 느려졌던 적 있음).
+def get_reduction_rules():
+    df = load_data("reduction_rules")
+    rules = []
+    if not df.empty and 'start_date' in df.columns:
+        for _, row in df.iterrows():
+            # 구글시트에서 직접 입력/수정하면 날짜가 "2026-01-01"이 아니라
+            # "2026. 1. 1" 같은 로케일 형식일 수 있어서, 문자열이 아니라 실제
+            # 날짜로 파싱해서 저장해둔다. 파싱 안 되는 규칙은 걸러낸다.
+            start = pd.to_datetime(row['start_date'], errors='coerce')
+            end = pd.to_datetime(row['end_date'], errors='coerce')
+            if pd.isnull(start) or pd.isnull(end):
+                continue
+            rules.append({
+                'start': start.date(),
+                'end': end.date(),
+                'route': normalize_key(row['route']),
+                'seq': normalize_key(row['sequence']),
+                'condition': row['condition']
+            })
+    return rules
+
 def is_reduction_target(date_str, route, seq, rules):
     try:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
     except: return False
     is_holi = is_holiday_or_weekend(d)
-    
+
     tgt_route = normalize_key(route)
     tgt_seq = normalize_key(seq)
-    
+
     for r in rules:
-        if r['start'] <= date_str <= r['end']:
-            rule_route = normalize_key(r['route'])
-            rule_seq = normalize_key(r['seq'])
-            
-            if rule_route == tgt_route and rule_seq == tgt_seq:
-                if r['condition'] == 'Always': return True
-                if r['condition'] == 'Weekend/Holiday' and is_holi: return True
+        if not (r['start'] <= d <= r['end']):
+            continue
+        if r['route'] == tgt_route and r['seq'] == tgt_seq:
+            if r['condition'] == 'Always': return True
+            if r['condition'] == 'Weekend/Holiday' and is_holi: return True
     return False
 
 # ==========================================
@@ -1093,14 +1340,26 @@ def parse_roster_excel(file):
             {'route':1, 'seq':2, 'car':3, 'am_fix':4, 'am_sub':5, 'pm_fix':6, 'pm_sub':7},
             {'route':9, 'seq':10, 'car':11, 'am_fix':12, 'am_sub':13, 'pm_fix':14, 'pm_sub':15}
         ]
-        
+
         for side in cols_map:
             # [기억 변수] 병합된 정보를 채우기 위함
             last_route = None
-            last_car = None 
-            
+            last_car = None
+
             for curr_idx in range(start_row + 3, end_row):
                 try:
+                    # [경계 감지] 좌/우 표는 실제 데이터 길이가 서로 다를 수 있어서(우측 표가
+                    # 좌측보다 짧게 끝나는 경우 등), 짧은 쪽이 먼저 끝나면 그 아래는 휴무자
+                    # 명단/예비차/감차/면허대수 같은 하단 요약란이 우연히 같은 열 위치에
+                    # 걸쳐 있어서 이걸 배차 데이터로 오인하고, 마지막 실제 차량번호가
+                    # 요약란 전체에 fill-down되어 엉뚱한 노선/순번이 그 차량에 붙는 버그가
+                    # 있었음("번호"는 요약란 초입 몇 줄까지도 채워져 있어 경계로 못 씀).
+                    # "순번"은 실제 배차 행에만 존재하고 요약란부터는 항상 비어있으므로
+                    # 이게 비면 표가 끝난 것으로 보고 멈춘다.
+                    raw_seq_check = df_raw.iloc[curr_idx, side['seq']]
+                    if pd.isnull(raw_seq_check) or str(raw_seq_check).strip() == "":
+                        break
+
                     # 1. 노선 (Fill-down: 비어있으면 윗줄 값 사용)
                     raw_route = df_raw.iloc[curr_idx, side['route']]
                     if pd.notnull(raw_route) and str(raw_route).strip() != "":

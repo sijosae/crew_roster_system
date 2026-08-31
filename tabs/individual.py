@@ -51,11 +51,12 @@ def render_individual_calendar_tab():
     PLACEHOLDER = "승무원을 선택하세요"
     driver_options = [PLACEHOLDER] + drivers['name'].tolist()
 
-    c_nm, c_nav = st.columns([2, 2.7])
-    with c_nm:
-        target = st.selectbox("승무원 선택", driver_options, key='sel_driver', label_visibility="collapsed")
-    with c_nav:
-        utils.render_month_nav("indiv_month", "indiv_view_year", "indiv_view_month")
+    with st.container(key="formbox_indiv_nav"):
+        c_nm, c_nav = st.columns([1, 1.2])
+        with c_nm:
+            target = st.selectbox("승무원 선택", driver_options, key='sel_driver', label_visibility="collapsed")
+        with c_nav:
+            utils.render_month_nav("indiv_month", "indiv_view_year", "indiv_view_month")
 
     st.divider()
 
@@ -81,8 +82,10 @@ def render_individual_calendar_tab():
     h_dict = {}
     if not gh_df.empty:
         for _, r in gh_df.iterrows():
-            if r['driver_name'] not in h_dict: h_dict[r['driver_name']] = []
-            h_dict[r['driver_name']].append((r['start_date'], r['group_name']))
+            # [수정] utils.get_group_from_dict과 짝을 맞춰 정규화된 이름을 키로 씀
+            key = utils.norm_name(r['driver_name'])
+            if key not in h_dict: h_dict[key] = []
+            h_dict[key].append((r['start_date'], r['group_name']))
         for k in h_dict: h_dict[k].sort(key=lambda x:x[0], reverse=True)
 
     if df_work.empty:
@@ -95,21 +98,25 @@ def render_individual_calendar_tab():
     if target:
         year, month = st.session_state.indiv_view_year, st.session_state.indiv_view_month
         filter_ym = f"{year}-{month:02d}"
-        
+        # [수정] work_history는 엑셀 배차일지에서 그대로 옮겨진 이름이라 대소문자가 승무원
+        # 명단과 다를 수 있음(예: "김성근b" vs "김성근B") - 그대로 == 비교하면 그 날짜가
+        # 통째로 빠져서 실제근무 집계에서 누락됨. 정규화한 이름으로 비교함.
+        target_norm = utils.norm_name(target)
+
         if not gh_df.empty:
-            my_history = gh_df[gh_df['driver_name'] == target].sort_values(by='start_date', ascending=False)
+            my_history = gh_df[gh_df['driver_name'].astype(str).map(utils.norm_name) == target_norm].sort_values(by='start_date', ascending=False)
             if not my_history.empty:
                 current_grp = my_history.iloc[0]['group_name']
                 with st.expander(f"📜 {target}님 소속 조 이력 (현재: {current_grp})", expanded=False):
                     st.dataframe(my_history[['start_date', 'group_name']], hide_index=True, use_container_width=True)
-        
-        my_plan = df_plan[(df_plan['name']==target) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
-        my_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
-        
+
+        my_plan = df_plan[(df_plan['name'].astype(str).map(utils.norm_name)==target_norm) & (df_plan['date'].astype(str).str.startswith(filter_ym))] if not df_plan.empty else pd.DataFrame()
+        my_work = df_work[(df_work['name'].astype(str).map(utils.norm_name)==target_norm) & (df_work['date'].astype(str).str.startswith(filter_ym))] if not df_work.empty else pd.DataFrame()
+
         stats_am, stats_pm = calculate_real_stats(my_work, reduction_rules, h_dict, target)
-        
+
         y_filter = f"{year}-"
-        y_work = df_work[(df_work['name']==target) & (df_work['date'].astype(str).str.startswith(y_filter))] if not df_work.empty else pd.DataFrame()
+        y_work = df_work[(df_work['name'].astype(str).map(utils.norm_name)==target_norm) & (df_work['date'].astype(str).str.startswith(y_filter))] if not df_work.empty else pd.DataFrame()
         y_am, y_pm = calculate_real_stats(y_work, reduction_rules, h_dict, target)
         
         st.markdown(f"""
